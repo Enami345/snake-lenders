@@ -7,10 +7,6 @@ __pycache__/
 venv/
 env/
 
-# Trained PPO model (too large, groupmates train their own)
-ai/ppo_model.zip
-ai/ppo_model_100k.zip
-
 # VS Code settings
 .vscode/
 
