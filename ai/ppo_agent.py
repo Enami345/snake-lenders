@@ -11,7 +11,28 @@ import os
 import numpy as np
 from game.models import BoardState, Player
 from game.engine import calculate_snake_cost, can_place_snake
-from ai.expectimax import find_best_snake_to_buy
+from ai.expectimax import (find_best_snake_to_buy, expectimax_decision,
+                           propose_cheap_trap, propose_big_snake,
+                           propose_lurk)
+
+# PPO action space — the policy picks a STRATEGY each turn (this is what
+# gives Hard a real edge over Easy's single fixed heuristic):
+#   0 = roll only (bank points)
+#   1 = cheap short trap just ahead of the leader
+#   2 = save up & drop the longest affordable snake (max knockback)
+#   3 = win-denial lurk snake near the goal (tiles 85-90)
+N_ACTIONS = 4
+
+
+def _action_to_shop(board, player, action):
+    """Map a PPO action to a shop decision (or None to just roll)."""
+    if action == 1:
+        return propose_cheap_trap(board, player)
+    if action == 2:
+        return propose_big_snake(board, player)
+    if action == 3:
+        return propose_lurk(board, player)
+    return None
 
 # Path where the trained model is saved/loaded
 MODEL_PATH = "ai/ppo_model.zip"
@@ -95,9 +116,8 @@ def build_training_env():
         """
         Custom Gym environment for Snakes & Lenders.
 
-        Action space:
-            0 = Just roll (no snake purchase)
-            1 = Buy the best available snake
+        Action space (Discrete(4)): roll / cheap trap / big snake / lurk.
+        The policy chooses the strategy itself — see _action_to_shop.
 
         Observation space:
             14-dimensional float vector (see encode_state)
@@ -107,7 +127,7 @@ def build_training_env():
 
         def __init__(self):
             super().__init__()
-            self.action_space = spaces.Discrete(2)
+            self.action_space = spaces.Discrete(N_ACTIONS)
             self.observation_space = spaces.Box(
                 low=0.0, high=1.0, shape=(14,), dtype=np.float32
             )
@@ -127,43 +147,74 @@ def build_training_env():
             return encode_state(self.board, self.ai_player), {}
 
         def step(self, action):
-            # Action 0 = roll only, Action 1 = try to buy best snake then roll
-            shop_decision = None
-            if action == 1:
-                best = find_best_snake_to_buy(self.board, self.ai_player)
-                if best:
-                    head, tail, _ = best
-                    shop_decision = {"head": head, "tail": tail}
+            """
+            One agent decision = one full round:
+              1. Apply the policy's action on the AGENT's turn (roll, or
+                 buy-best-snake then roll).
+              2. Then let every OPPONENT take their own turn using their
+                 own Expectimax policy, until it is the agent's turn again
+                 (or the game ends).
+            Reward/observation are always from the agent's perspective.
+            """
+            agent_id        = self.ai_player.player_id
+            start_pos       = self.ai_player.position
+            start_bankrupts = self.ai_player.bankrupt_count
+            opps            = [o for o in self.board.players
+                               if o.player_id != agent_id]
+            opp_pos_before  = {o.player_id: o.position for o in opps}
 
+            # ── 1. Agent's turn (policy picks the strategy) ──────────
+            shop_decision = _action_to_shop(self.board, self.ai_player, action)
             result = do_turn(self.board, shop_decision=shop_decision)
             self.turn_count += 1
+            agent_bought = bool(result.get("bought"))
+            winner       = result["winner"]
 
-            # ── Reward function ──────────────────────────────────────
-            reward = 0.0
+            # ── 2. Opponents' turns (their own Expectimax) ───────────
+            while winner is None and self.board.active_player.player_id != agent_id:
+                opp          = self.board.active_player
+                opp_decision = expectimax_decision(self.board, opp)
+                opp_result   = do_turn(self.board, shop_decision=opp_decision)
+                self.turn_count += 1
+                winner = opp_result["winner"]
 
-            if result["winner"]:
-                if result["winner"].player_id == self.ai_player.player_id:
-                    reward = +100.0   # Big reward for winning
-                else:
-                    reward = -100.0   # Big penalty for losing
+            # How much ground opponents lost this round (our sabotage paying
+            # off — also catches them hitting board snakes, close enough).
+            opp_setback = sum(max(0, opp_pos_before[o.player_id] - o.position)
+                              for o in opps)
 
-            else:
-                # Small reward for making progress toward tile 100
-                reward += self.ai_player.position * 0.1
-
-                # Penalty for going bankrupt
-                if self.ai_player.points < 0:
-                    reward -= 50.0
-
-                # Small reward for successfully placing a snake
-                if result.get("bought"):
-                    reward += 10.0
-
-            terminated = result["winner"] is not None
+            terminated = winner is not None
             truncated  = self.turn_count >= self.max_turns
+
+            went_bankrupt = self.ai_player.bankrupt_count > start_bankrupts
+            reward = self._compute_reward(
+                winner, agent_bought, start_pos, went_bankrupt, opp_setback)
 
             obs = encode_state(self.board, self.ai_player)
             return obs, reward, terminated, truncated, {}
+
+        def _compute_reward(self, winner, agent_bought, start_pos,
+                            went_bankrupt, opp_setback) -> float:
+            """
+            Win/loss dominates. Shaping is small and bounded: progress delta
+            (not absolute position) plus a reward for setting opponents back,
+            so the policy learns that effective sabotage is worth the spend.
+            """
+            if winner is not None:
+                return 100.0 if winner.player_id == self.ai_player.player_id else -100.0
+
+            reward = 0.0
+            # Progress delta toward tile 100 (negative if snake-bitten back)
+            reward += (self.ai_player.position - start_pos) * 0.1
+            # Reward setting opponents back (sabotage paying off)
+            reward += opp_setback * 0.15
+            # Real bankruptcy this round (bomb wiped the wallet → reset)
+            if went_bankrupt:
+                reward -= 50.0
+            # Tiny nudge for actually placing a trap
+            if agent_bought:
+                reward += 2.0
+            return reward
 
     return SnakesLendersEnv
 
@@ -245,16 +296,13 @@ def ppo_decision(board: BoardState, player: Player, model) -> dict | None:
     Returns:
         dict with 'head' and 'tail' if buying, or None to just roll.
     """
+    if not player.can_buy_snake:
+        return None
     obs = encode_state(board, player)
     action, _ = model.predict(obs, deterministic=True)
 
-    if action == 1:
-        best = find_best_snake_to_buy(board, player)
-        if best:
-            head, tail, _ = best
-            cost = calculate_snake_cost(player, head, tail)
-            if player.points >= cost:
-                print(f"  [PPO] Buying snake {head}→{tail} (cost: {cost})")
-                return {"head": head, "tail": tail}
-
-    return None
+    shop = _action_to_shop(board, player, int(action))
+    if shop:
+        print(f"  [PPO] action {int(action)} → snake "
+              f"{shop['head']}→{shop['tail']}")
+    return shop

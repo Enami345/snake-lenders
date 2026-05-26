@@ -14,6 +14,13 @@ import sys
 import argparse
 sys.path.insert(0, ".")
 
+# Windows consoles default to cp1252 and crash on the emoji / arrow glyphs
+# in game logs (UnicodeEncodeError). Force UTF-8 so console + training run.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except (AttributeError, ValueError):
+    pass
+
 
 def main():
     parser = argparse.ArgumentParser()

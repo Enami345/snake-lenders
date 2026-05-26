@@ -63,11 +63,12 @@ class Player:
         return True
 
     def go_bankrupt(self):
-        """Reset player to start due to bankruptcy."""
-        self.position = 0        # Back to off the board
+        """Bankruptcy sends the player back to the start (tile 0) and
+        wipes their wallet — a heavy economic + positional penalty."""
+        self.position = 0
         self.points = 0
         self.bankrupt_count += 1
-        print(f"  [BANKRUPT] {self.name} went bankrupt and returns to tile 0!")
+        print(f"  [BANKRUPT] {self.name} went bankrupt — back to tile 0!")
 
 
 @dataclass

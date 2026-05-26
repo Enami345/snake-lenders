@@ -15,17 +15,20 @@ NUM_BOMBS       = 5
 MIN_AVG_TURNS   = 10
 MAX_RETRIES     = 200
 BOMB_DEDUCTION  = 30
-BASE_TILE_VALUE = 10
+BASE_TILE_VALUE = 3     # scarce income — points must be managed, not hoarded
 
 
 def generate_tile_values(seed: int) -> dict:
     rng = random.Random(seed)
     tiles = {}
     for tile in range(1, NUM_TILES + 1):
-        base = BASE_TILE_VALUE + (tile // 10) * 5
-        variance = rng.randint(-5, 15)
-        tiles[tile] = max(BASE_TILE_VALUE, base + variance)
-    tiles[100] = 200
+        # Modest, rising income (~4-14/turn): points accumulate enough to
+        # fund snakes, but a snake purchase is still a real sacrifice and a
+        # bomb can threaten bankruptcy when you're low.
+        base = (BASE_TILE_VALUE + 1) + (tile // 15)
+        variance = rng.randint(0, 4)
+        tiles[tile] = max(1, base + variance)
+    tiles[100] = 40    # modest finish bonus (winning doesn't need points)
     return tiles
 
 

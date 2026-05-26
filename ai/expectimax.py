@@ -4,12 +4,53 @@ Calculates the best action each turn by averaging all 6 dice outcomes
 and evaluating whether buying a snake is worth it right now.
 """
 
+import random
+
 from game.models import BoardState, Player, Snake
-from game.engine import calculate_snake_cost, can_place_snake
+from game.engine import (calculate_snake_cost, can_place_snake,
+                         MAX_SNAKE_HEAD, MIN_SNAKE_COST, STRIKE_ZONE)
 
 
 # How many dice outcomes to look ahead (always 6 for a standard die)
 DICE_OUTCOMES = list(range(1, 7))
+
+# Point-value of one tile of board progress — expresses snake damage
+# (a setback) in points. Tunable for balance.
+TILE_VALUE = 10.0
+
+# Snakes trigger on an EXACT-head landing (~1/6 per pass). A cunning AI
+# beats that low rate by (a) placing heads in the opponent's immediate
+# dice range so they get a shot every turn while approaching, (b) using
+# maximum setback so each rare hit erases a brutal amount of progress,
+# and (c) forcing re-climbs: a hit drops them back through the lower
+# snakes, giving those extra passes. Hit estimates by distance ahead:
+# Strike-range snakes catch a passing opponent ~50%, so a well-placed
+# trap is reliably worth its cost — strategy, not luck.
+HIT_IN_RANGE   = 0.50      # head within ~1 die of the opponent
+HIT_NEAR       = 0.35      # 7–12 tiles ahead (reached in ~2 turns)
+HIT_FAR        = 0.20      # further out
+
+# Aggressive harassment: sabotage early, spend down to a thin cushion.
+# Point-theft on hits self-funds this, so heavy aggression pays off.
+SABOTAGE_MIN_POS  = 10
+MIN_DAMAGE_TO_BUY = 6.0
+SAFETY_BUFFER     = 12
+
+# Win-denial: a snake parked near the goal against an opponent who is
+# almost home is worth extra — knocking them back from the finish line
+# is the most demoralizing play available.
+WIN_DENIAL_TILE = 85       # head at/above this = near-goal lurk
+WIN_DENIAL_OPP  = 72       # opponent at/above this = almost winning
+WIN_DENIAL_MULT = 1.8
+
+# ── EASY-mode handicap ────────────────────────────────────────────────────────
+# expectimax_decision is the EASY opponent. It plays deliberately weakly so the
+# trained Hard (PPO) agent has a beatable target: it acts late, hesitates, hoards
+# too much, and only ever places cheap short traps (never big knockbacks or
+# win-denial lurks — those are the Hard agent's tools).
+EASY_SABOTAGE_MIN_POS = 35
+EASY_BUFFER           = 45
+EASY_SKIP_PROB        = 0.35
 
 
 # ── Board Evaluation ──────────────────────────────────────────────────────────
@@ -71,8 +112,10 @@ def expected_value_after_roll(board: BoardState, player: Player) -> float:
     total = 0.0
 
     for die in DICE_OUTCOMES:
-        # Simulate moving without modifying the real board
-        new_pos = min(player.position + die, 100)
+        # Simulate moving without modifying the real board.
+        # Overshoot past 100 is an invalid move — player stays put.
+        raw = player.position + die
+        new_pos = player.position if raw > 100 else raw
 
         # Apply ladder
         for ladder in board.ladders:
@@ -102,53 +145,60 @@ def expected_value_after_roll(board: BoardState, player: Player) -> float:
 def evaluate_snake_placement(board: BoardState, player: Player,
                               head: int, tail: int) -> float:
     """
-    Calculate the Return on Investment (ROI) of placing a snake at head→tail.
+    Expected DAMAGE (in points) of placing a snake at head→tail —
+    how much opponent progress we expect to undo.
 
-    ROI = (probability opponent lands on it) x (setback value) - cost
+        damage = setback_tiles × TILE_VALUE × expected_landings
+
+    Cunning valuation: reward heads placed in the opponent's immediate
+    path (caught soon), big setbacks (brutal knockback), and targeting an
+    advanced opponent (erasing more progress is worth more).
+
+    Note we return damage, not damage−cost: points are abundant (tile
+    income ≫ snake cost), so the binding constraint is the 3-snake cap,
+    not affordability. The buy decision spends a slot on the best target.
     """
-    cost = calculate_snake_cost(player, head, tail)
+    setback_tiles = head - tail
+    best_damage = 0.0
 
-    # Calculate probability opponent lands on the snake head within 3 turns
-    total_prob = 0.0
     for other in board.players:
         if other.player_id == player.player_id:
             continue
+        dist = head - other.position
+        if dist <= 0:
+            continue  # snake is behind this opponent — useless against them
 
-        # Simulate 3 turns of dice rolls (look-ahead)
-        for die1 in DICE_OUTCOMES:
-            pos1 = min(other.position + die1, 100)
-            prob1 = 1 / 6.0
-            if pos1 == head:
-                total_prob += prob1
-            for die2 in DICE_OUTCOMES:
-                pos2 = min(pos1 + die2, 100)
-                prob2 = prob1 / 6.0
-                if pos2 == head:
-                    total_prob += prob2
-                for die3 in DICE_OUTCOMES:
-                    pos3 = min(pos2 + die3, 100)
-                    prob3 = prob2 / 6.0
-                    if pos3 == head:
-                        total_prob += prob3
+        if dist <= 6:
+            p_hit = HIT_IN_RANGE
+        elif dist <= 12:
+            p_hit = HIT_NEAR
+        else:
+            p_hit = HIT_FAR
 
-    # Setback value = how far back the snake sends the opponent
-    setback = (head - tail) * 10.0
+        # Erasing an advanced opponent's progress is worth more (1.0–2.0x).
+        progress_weight = 1.0 + other.position / 100.0
+        damage = setback_tiles * TILE_VALUE * p_hit * progress_weight
 
-    # ROI = expected damage - cost
-    roi = (total_prob * setback) - (cost * 0.01)
-    return roi
+        # Win-denial: parking a snake near the goal against an
+        # almost-finished opponent is the most valuable sabotage.
+        if head >= WIN_DENIAL_TILE and other.position >= WIN_DENIAL_OPP:
+            damage *= WIN_DENIAL_MULT
+
+        best_damage = max(best_damage, damage)
+
+    return best_damage
 
 
 def find_best_snake_to_buy(board: BoardState,
                             player: Player) -> tuple[int, int, float] | None:
     """
-    Search all valid snake placements and return the best one.
-    Returns (head, tail, roi) or None if no profitable placement exists.
+    Search all valid snake placements and return the highest-damage one.
+    Returns (head, tail, expected_damage) or None if none placeable.
     """
     if not player.can_buy_snake:
         return None
 
-    best_roi = -1.0  # Only buy if ROI is positive
+    best_damage = 0.0
     best_head = None
     best_tail = None
 
@@ -158,62 +208,147 @@ def find_best_snake_to_buy(board: BoardState,
         if other.player_id == player.player_id:
             continue
 
-        # Try placing snakes 1 to 15 tiles ahead of the opponent
+        # Try placing snakes just ahead of the opponent (favor the
+        # immediate dice range so they get a shot next turn).
         for offset in range(1, 16):
             head = other.position + offset
-            if head > 80 or head > 99:
+            if head > MAX_SNAKE_HEAD:
                 continue
 
-            # Try various snake lengths
-            for length in range(5, 26, 5):
-                tail = head - length
-                if tail < 1:
+            # Try a range of setbacks, including the maximum (tail=1) so
+            # a hit is as brutal as possible.
+            tails = {head - L for L in (5, 10, 15, 20, 25)}
+            tails.add(max(1, head - 40))
+            tails.add(1)
+            for tail in sorted(tails):
+                if tail < 1 or tail >= head:
                     continue
 
                 valid, _ = can_place_snake(board, player, head, tail)
                 if not valid:
                     continue
 
-                roi = evaluate_snake_placement(board, player, head, tail)
-                if roi > best_roi:
-                    best_roi = roi
+                # Budget-aware: skip placements we can't afford right now
+                # (income is scarce — the AI must manage points too).
+                if calculate_snake_cost(player, head, tail) > player.points:
+                    continue
+
+                damage = evaluate_snake_placement(board, player, head, tail)
+                if damage > best_damage:
+                    best_damage = damage
                     best_head = head
                     best_tail = tail
 
     if best_head is None:
         return None
-    return (best_head, best_tail, best_roi)
+    return (best_head, best_tail, best_damage)
 
 
 # ── Main Decision Function ────────────────────────────────────────────────────
 
 def expectimax_decision(board: BoardState, player: Player) -> dict | None:
     """
-    Main entry point for the Expectimax AI.
-    Called each turn to decide whether to buy a snake or just roll.
+    EASY-mode AI. A deliberately weak saboteur: it reacts late, hesitates,
+    hoards too many points, and only places cheap short traps. This is the
+    beatable baseline the Hard (PPO) agent trains against and outplays.
 
-    Returns:
-        dict with 'head' and 'tail' if buying a snake, or None to just roll.
+    Returns a {'head','tail'} dict to place a snake, or None to just roll.
     """
-    if not player.can_buy_snake or player.points < 100:
-        return None  # Can't afford anything or already at max snakes
-
-    # Calculate expected value of just rolling (baseline)
-    ev_roll = expected_value_after_roll(board, player)
-
-    # Find best snake to buy
-    result = find_best_snake_to_buy(board, player)
-
-    if result is None:
+    if not player.can_buy_snake:
         return None
 
-    head, tail, roi = result
+    # Reacts only once an opponent is well advanced, and hesitates often.
+    leader_pos = max((o.position for o in board.players
+                      if o.player_id != player.player_id), default=0)
+    if leader_pos < EASY_SABOTAGE_MIN_POS:
+        return None
+    if random.random() < EASY_SKIP_PROB:
+        return None
 
-    # Only buy if the snake placement improves our position meaningfully
-    cost = calculate_snake_cost(player, head, tail)
-    if roi > 0 and player.points >= cost:
-        print(f"  [Expectimax] Buying snake {head}→{tail} "
-              f"(ROI: {roi:.2f}, cost: {cost})")
-        return {"head": head, "tail": tail}
+    # Only ever a cheap short trap — never a big knockback or win-denial lurk.
+    shop = propose_cheap_trap(board, player)
+    if shop is None:
+        return None
 
+    cost = calculate_snake_cost(player, shop["head"], shop["tail"])
+    if player.points - cost < EASY_BUFFER:
+        return None   # over-cautious hoarding
+
+    print(f"  [Easy] Buying snake {shop['head']}→{shop['tail']} (cost: {cost})")
+    return shop
+
+
+# ── Placement strategies (for the PPO agent's expanded action space) ──────────
+#
+# Each returns a {"head","tail"} dict for a placeable, affordable snake of a
+# given STYLE, or None. The PPO policy chooses WHICH style to use each turn,
+# so it controls strategy/economy timing itself (unlike expectimax_decision,
+# which applies one fixed heuristic).
+
+def _leading_opponent(board: BoardState, player: Player):
+    opps = [o for o in board.players if o.player_id != player.player_id]
+    return max(opps, key=lambda o: o.position, default=None)
+
+
+def _placeable(board: BoardState, player: Player, head: int, tail: int) -> bool:
+    if tail < 1 or tail >= head:
+        return False
+    valid, _ = can_place_snake(board, player, head, tail)
+    return valid and calculate_snake_cost(player, head, tail) <= player.points
+
+
+# Catch-optimal offsets: placing the head this far ahead of the opponent
+# puts the whole strike zone [head-Z, head] inside their dice range
+# [pos+1, pos+6], maximizing the chance they land in it (~(Z+1)/6).
+def _catch_offsets():
+    return range(STRIKE_ZONE + 1, 7)   # e.g. Z=3 → 4,5,6
+
+
+def propose_cheap_trap(board: BoardState, player: Player) -> dict | None:
+    """Short, cheap snake placed for maximum catch chance just ahead."""
+    opp = _leading_opponent(board, player)
+    if opp is None:
+        return None
+    for offset in _catch_offsets():
+        head = opp.position + offset
+        for length in (8, 6, 5):
+            tail = head - length
+            if _placeable(board, player, head, tail):
+                return {"head": head, "tail": tail}
+    return None
+
+
+def propose_big_snake(board: BoardState, player: Player) -> dict | None:
+    """Catch-optimal placement with the biggest affordable setback."""
+    opp = _leading_opponent(board, player)
+    if opp is None:
+        return None
+    best = None
+    for offset in _catch_offsets():
+        head = opp.position + offset
+        if head > MAX_SNAKE_HEAD:
+            continue
+        for tail in (1, head - 40, head - 30, head - 20, head - 10):
+            if _placeable(board, player, head, tail):
+                if best is None or (head - tail) > (best["head"] - best["tail"]):
+                    best = {"head": head, "tail": tail}
+    return best
+
+
+def propose_lurk(board: BoardState, player: Player) -> dict | None:
+    """
+    Win-denial: against an almost-finished opponent, drop a catch-optimal,
+    maximum-setback snake in their path near the goal — a hit resets them
+    to near the start.
+    """
+    opp = _leading_opponent(board, player)
+    if opp is None or opp.position < 60:
+        return None
+    for offset in _catch_offsets():
+        head = min(opp.position + offset, MAX_SNAKE_HEAD)
+        if head <= opp.position:
+            continue
+        for tail in (1, head - 40, head - 30, head - 20):
+            if _placeable(board, player, head, tail):
+                return {"head": head, "tail": tail}
     return None

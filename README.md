@@ -1,7 +1,7 @@
 # 🐍 Snakes & Lenders
 
 A strategic twist on the classic Snakes & Ladders board game.
-Players earn points and **buy snakes** to hinder opponents.
+Players earn points and **buy snakes** to sabotage opponents.
 Built with Python and Pygame, featuring two AI difficulty levels.
 
 **Group 10 — BSCS 3-4 | Introduction to Artificial Intelligence | PUP**
@@ -11,91 +11,74 @@ Cabral · Caparas · Exconde · Rivera
 
 ## What is Snakes & Lenders?
 
-Unlike classic Snakes & Ladders which relies purely on luck, Snakes & Lenders
-adds a strategic layer where players earn points from tiles and spend them to
-**place snakes** on the board to send opponents backward. Victory depends on
-smart resource management, not just dice rolls.
+Unlike classic Snakes & Ladders, which is pure luck, Snakes & Lenders adds a
+**resource-management layer**: you earn points from tiles and spend them to
+place snakes that knock opponents backward (and rob their points). Points are
+**scarce** and bombs can **bankrupt** you, so winning depends on smart timing —
+when to save, when to strike, and where to trap an opponent — not just the dice.
+
+> The core principle: **using the economy well is your leverage.** A player who
+> just rolls and ignores the shop will lose to one who plays the economy.
 
 ---
 
 ## Requirements
 
-Make sure you have the following installed before running the game.
-
 ### Python
-- Python **3.10 or higher**
-- Download from: https://www.python.org/downloads/
-- During installation, check **"Add Python to PATH"**
+- Python **3.10 or higher** — https://www.python.org/downloads/
+- During install, check **"Add Python to PATH"**
 
-### Python Libraries
-Install all required libraries by running these commands in your terminal:
-
+### Setup (virtual environment recommended)
 ```bash
-pip install pygame
-pip install stable-baselines3
-pip install gymnasium
-pip install numpy
+python -m venv venv
+venv\Scripts\activate            # Windows  (use: source venv/bin/activate on macOS/Linux)
+pip install -r requirements.txt
 ```
 
-Or install all at once:
-```bash
-pip install pygame stable-baselines3 gymnasium numpy
-```
-
-To verify everything is installed correctly:
-```bash
-pip show pygame stable-baselines3 gymnasium numpy
-```
+`requirements.txt` pulls in: `pygame`, `stable-baselines3`, `gymnasium`, `numpy`.
 
 ---
 
 ## Project Structure
 
+```
+snake-lenders/
+├── main.py              # Entry point / CLI (modes, training, UTF-8 console fix)
+├── requirements.txt
+├── game/
+│   ├── models.py        # Snake, Ladder, Player, BoardState dataclasses
+│   ├── board.py         # Randomized board generator (BFS-validated) + tile economy
+│   ├── engine.py        # Turn loop, movement, snake/bomb/economy rules
+│   └── console_game.py  # Terminal game loop
+├── ai/
+│   ├── expectimax.py    # Easy AI — cunning saboteur + placement strategies
+│   ├── ppo_agent.py     # Hard AI — PPO env, training, inference
+│   └── ppo_model.zip    # Trained PPO model (included)
+├── ui/
+│   └── renderer.py      # Pygame board + side panel + snake shop
+├── docs/                # Case study manuscript (PDF)
+└── knowledge/           # Design notes / change log for the refactor
+```
+
 ---
 
 ## How to Run
 
-### 1. Clone or download the project
 ```bash
-git clone https://github.com/YOUR_USERNAME/snakes-lenders.git
-cd snakes-lenders
+# from the project root, with the venv activated
+python main.py                          # Human vs Human (Pygame UI)
+python main.py --mode hvai              # Human vs Easy AI (Expectimax)
+python main.py --mode hvai --hard       # Human vs Hard AI (PPO)
+python main.py --mode aivai             # Easy AI vs Hard AI
+python main.py --console                # Play in the terminal instead of the UI
+python main.py --phase 1                # Board-generation test
+python main.py --train                  # (Re)train the PPO Hard AI (~2-3 min / 100k steps)
+python main.py --train --steps 300000   # Longer training, stronger model
 ```
 
-### 2. Install libraries
-```bash
-pip install pygame stable-baselines3 gymnasium numpy
-```
-
-### 3. Train the Hard AI (PPO) — do this once before playing Hard mode
-```bash
-python main.py --train
-```
-This takes **20–40 minutes**. The trained model is saved to `ai/ppo_model.zip`.
-
-For a smarter AI (takes longer):
-```bash
-python main.py --train --steps 500000
-```
-
-### 4. Run the game
-```bash
-python main.py
-```
-
----
-
-## Game Modes
-
-| Command | Mode |
-|---------|------|
-| `python main.py` | Human vs Human (Pygame UI) |
-| `python main.py --mode hvai` | Human vs Easy AI |
-| `python main.py --mode hvai --hard` | Human vs Hard AI |
-| `python main.py --mode aivai` | Easy AI vs Hard AI |
-| `python main.py --console` | Play in terminal instead of UI |
-| `python main.py --phase 1` | Test board generation only |
-| `python main.py --train` | Train the PPO Hard AI |
-| `python main.py --train --steps 500000` | Train with more steps |
+A trained `ai/ppo_model.zip` is **included**, so Hard mode works out of the box.
+If the model is missing or fails to load, Hard mode automatically falls back to
+the Expectimax AI.
 
 ---
 
@@ -104,75 +87,114 @@ python main.py
 | Key | Action |
 |-----|--------|
 | **SPACE** | Roll dice / continue |
-| **B** | Open snake shop (human players only) |
+| **B** | Open snake shop (human players) |
 | **ENTER** | Confirm number input in shop |
 | **ESC** | Cancel shop input |
-| **Q** | Quit the game |
+| **Q** | Quit |
 
 ---
 
 ## Game Rules
 
 ### Board
-- 10×10 board, 100 tiles, randomized every game
-- 7 ladders (move up), 4 initial snakes (move down), 5 bomb tiles (lose points)
+- 10×10 board, 100 tiles, **randomized every game** (BFS-validated as solvable)
+- 7 ladders, 4 initial board snakes, 5 bomb tiles
 - Players start off the board at tile 0
 
 ### Movement
-- Players roll a 6-sided die each turn
-- Landing on a ladder bottom → climb to the top
-- Landing on a snake head → slide to the tail
-- If a roll overshoots tile 100 → bounce back (e.g. tile 98 + roll 4 = tile 96)
+- Roll a 6-sided die each turn
+- Land on a ladder bottom → climb to the top
+- **Exact roll to win:** overshooting tile 100 is an invalid move — you **stay
+  put** (e.g. tile 97 + roll 5 → stays at 97). You must land on 100 exactly.
 
-### Points
-- Each tile has a point value — earned when you land on it
-- Bomb tiles deduct 30 points
-- Tile 100 gives a 200 point bonus
-- Going below 0 points → bankrupt → return to tile 0
+### Snakes
+- **Board snakes** are fixed terrain — they bite only on an **exact-head** landing.
+- **Player-placed snakes are active traps with a strike range:** you're bitten if
+  you land on the head **or the few tiles just below it**. Jumping clean over a
+  head is safe. A well-placed trap (head sitting inside the target's dice range)
+  catches a passing opponent most of the time.
+- **Owner immunity:** your own snakes never bite you.
+- A snake bite **slides you to the tail AND robs your points** (a flat amount plus
+  a slice of your wallet), paid to the snake's owner.
+- Player snakes are **single-use**: once a snake fires it's consumed, freeing a
+  slot so you can earn points and place another.
+
+### Economy (the heart of the game)
+- **Tile income is scarce** (~4–14 points/turn) — you must manage points, not
+  hoard mindlessly.
+- **Bombs scale with board depth** (deeper = nastier) and can push you below zero
+  → **bankruptcy**: sent **back to tile 0** with zero points. Brutal.
+- Tile 100 gives a small finish bonus.
 
 ### Snake Shop
-- Spend points to place snakes on the board to hinder opponents
-- Snake cost: `length × 10 × multiplier`
-  - 1st snake: 1.0× multiplier
-  - 2nd snake: 1.5× multiplier
-  - 3rd snake: 2.0× multiplier
-- Maximum 3 snakes per player
-- Snake head must be between tiles 20–80
-- Cannot place snakes on occupied tiles or ladder tiles
-- Cannot chain snakes (head cannot be at another snake's tail)
+- **Cost (sub-linear):** `2 × purchase_count × length^0.9` (min 12). Short snakes
+  are cheap; long, devastating snakes are affordable if you **save up** for them.
+- Maximum **3 active snakes** per player (single-use; place more as they fire)
+- Snake head must be between tiles **20–90**
+- Cannot place on occupied tiles or ladder tiles
+- Cannot chain snakes (head can't sit on another snake's tail)
+- **Cannot build a wall:** a snake can't extend a run of adjacent heads past 2,
+  so a region is always passable
 
 ### Winning
-- First player to reach tile 100 wins
+- First player to land **exactly** on tile 100 wins.
 
 ---
 
-## AI Algorithms
+## AI Opponents
 
-### Easy Mode — Expectimax
-- Makes decisions by calculating **expected value** across all 6 dice outcomes
-- Evaluates whether buying a snake is profitable using ROI calculation
-- No training needed — works immediately
-- Consistent and predictable behavior
+The two difficulties are genuinely different in skill.
 
-### Hard Mode — PPO (Proximal Policy Optimization)
-- Uses a **neural network** trained via reinforcement learning
-- Learns strategies by playing thousands of simulated games
-- Requires training before use (`python main.py --train`)
-- More adaptive and less predictable than Expectimax
+### Easy — Expectimax (deliberately weak)
+A simple, beatable baseline: it reacts late, hesitates, hoards too many points,
+and only ever places cheap short traps — never the big knockbacks or win-denial
+lurks. Good for learning the game. No training needed.
+
+### Hard — PPO (Proximal Policy Optimization)
+A neural-network agent trained via reinforcement learning (`stable-baselines3`):
+- Chooses a **strategy** each turn from a 4-action space — *roll* / *cheap trap* /
+  *save for a devastating snake* / *win-denial lurk*.
+- Places traps **catch-optimally** (head positioned so its strike range covers the
+  target's dice range) for maximum knockback + point theft, keeps a bomb buffer,
+  and parks win-denial snakes against an almost-finished opponent.
+- Trained by self-play against the Easy opponent; rewarded for winning and for the
+  setback it inflicts. **Wins ~94% of games vs Easy** (300-game evaluation).
+- A trained model ships with the repo. Retrain anytime with `python main.py
+  --train` (or `--steps 300000` for longer).
 
 ---
 
-## Note
+## What changed in this refactor
 
-The trained PPO model file (`ai/ppo_model.zip`) is **not included** in this
-repository because it is specific to each machine's training run.
+This branch reworks the game so the economy is genuinely strategic and the AIs
+are real opponents. Summary of the overhaul:
 
-Each person needs to train their own model by running:
-```bash
-python main.py --train
-```
+**Movement & win condition**
+- Overshooting tile 100 now means **stay put** (exact roll to win) instead of the
+  old bounce-back.
+- Fixed a bug where entering the board could skip a ladder.
 
-This takes 20–40 minutes. For a better model:
-```bash
-python main.py --train --steps 500000
-```
+**Snakes**
+- Player snakes gained a **strike range** (head + 2 tiles) so well-placed traps
+  reliably fire (~50%), while board snakes stay exact-head terrain.
+- Snakes are now **single-use** (consumed on hit) and **steal points** from the
+  victim to their owner.
+- Added an **anti-wall placement rule** so snake heads can't form an impassable
+  cluster. (Pass-over triggering was prototyped and reverted — long snakes became
+  softlocking walls.)
+
+**Economy & bankruptcy**
+- **Slashed tile income** and switched snake pricing to **sub-linear** so points
+  are scarce and you save up for big plays.
+- **Depth-scaled bombs** that actually cause **bankruptcy** (reset to tile 0).
+
+**AI**
+- Rewrote the **Expectimax** AI into a cunning, aggressive, win-denying saboteur
+  with proper points-based valuation (the old ROI math treated cost as ~free).
+- Rebuilt the **PPO** Hard AI: fixed a broken training environment (turns didn't
+  alternate; the opponent never played its own policy), fixed runaway reward
+  shaping, expanded the action space to 4 strategies, and retrained.
+
+**Infra**
+- Forced **UTF-8 console output** so emoji/arrow game logs don't crash on Windows.
+- Added design notes and a full change log under `knowledge/`.
