@@ -6,6 +6,7 @@ Ensures the board is solvable with an average path of at least 10 turns.
 
 import random
 from game.models import Snake, Ladder, BoardState, Player
+from game.log import gprint
 
 
 NUM_TILES       = 100
@@ -148,7 +149,7 @@ def generate_board(seed=None, players=None) -> BoardState:
             Player(player_id=1, name="Player 2"),
         ]
 
-    print(f"[Board] Generating with seed={seed}...")
+    gprint(f"[Board] Generating with seed={seed}...")
 
     for attempt in range(1, MAX_RETRIES + 1):
         rng = random.Random(seed + attempt)
@@ -164,8 +165,8 @@ def generate_board(seed=None, players=None) -> BoardState:
         if _board_is_valid(ladders, snakes):
             tiles    = generate_tile_values(seed + attempt)
             expected = bfs_expected_turns(ladders, snakes)
-            print(f"[Board] Valid! Attempt {attempt}, "
-                  f"expected turns: {expected:.1f}")
+            gprint(f"[Board] Valid! Attempt {attempt}, "
+                   f"expected turns: {expected:.1f}")
             return BoardState(
                 tiles=tiles,
                 ladders=ladders,

@@ -6,7 +6,7 @@ Ranked by importance. P0 = breaks core premise or grader claims. P1 = real bugs.
 
 ## P0 — Critical (fix or the project's claims are false)
 
-- [~] **Make economy load-bearing — ignoring it must be a LOSING strategy.** Root design flaw: roll-only player did fine, strategic layer optional.
+- [x] **Make economy load-bearing — ignoring it must be a LOSING strategy.** Root design flaw: roll-only player did fine, strategic layer optional. DONE — strategy beats rolling (acceptance passed).
   - TRIED **pass-over** (land on OR jump past head) → made snakes reliably fire BUT softlocks: any snake length>6 is an impassable wall (from the tail you can't out-roll the head). Reverted.
   - TRIED **one-shot pass-over** (immune after first bite) → no softlock, reliably load-bearing, but rejected by user (wanted exact-head + no immunity).
   - FINAL RULES (user choice): **exact-head landing only**, no immunity, anti-wall placement rule (`MAX_HEAD_RUN=2`, `_head_run_length`).
@@ -28,23 +28,24 @@ Ranked by importance. P0 = breaks core premise or grader claims. P1 = real bugs.
 - [x] **Fix ROI cost weighting** — `ai/expectimax.py` `evaluate_snake_placement` rewritten as expected DAMAGE (points): `setback × TILE_VALUE × p_hit × progress_weight`. Removed broken `cost*0.01`. Buy gate lowered 100→MIN_SNAKE_COST; removed dead `ev_roll`; cap uses MAX_SNAKE_HEAD. (Final form is the cunning model under exact-head — see #1.)
 - [x] **Fix PPO training env turn handling** — `ai/ppo_agent.py` `step()` rewritten. One step = agent's turn (policy action) THEN opponents take their own `expectimax_decision` turns until it's the agent's turn again. Reward/obs always agent-perspective. Verified turns alternate, opponent plays independently. Added UTF-8 stdout in `main.py` so emoji/arrow logs don't crash Windows training.
 - [x] **Rebalance PPO reward** — `ai/ppo_agent.py` `_compute_reward`. Win/loss ±100 dominates; shaping now = **progress delta** `(pos-start_pos)*0.1` (bounded over a game, was absolute position each step → 577 cumulative, now ~2-10). Bankruptcy penalty fixed to fire on real bankruptcy (`bankrupt_count` delta, was dead `points<0`). Snake-buy nudge +2.
-- [~] **PPO upgrade + retrain** — PPO was only Discrete(2) [roll/buy-best] and delegated placement to Expectimax → no real skill edge. Expanded to **Discrete(4)**: roll / cheap trap / save-for-big-snake / win-denial lurk (`_action_to_shop`, `propose_*` in expectimax). Reward now also credits opponent setback inflicted. Retraining on the fixed env (100k steps, background). Eval vs Expectimax pending training completion.
+- [x] **PPO upgrade + retrain** — PPO was only Discrete(2) [roll/buy-best] and delegated placement to Expectimax → no real skill edge. Expanded to **Discrete(4)**: roll / cheap trap / save-for-big-snake / win-denial lurk (`_action_to_shop`, `propose_*`, catch-optimal). Reward credits opponent setback. Owner-immunity + strike-zone=4 + difficulty split (Easy deliberately weak). Retrained vs weak Easy. **DONE: PPO Hard beats Easy ~94% over 300 games** (target was ≥75%).
 - [x] **Annoyance layer** — (1) snake bites **steal points** to owner (`_steal_points`, drives bankruptcy + self-funds traps), (2) AI **win-denial lurk** snakes near goal (`WIN_DENIAL_*`), (3) **aggressive** AI (low `SAFETY_BUFFER=12`, `SABOTAGE_MIN_POS=10`). Sim: AI 57% vs roll-only, bankruptcies up 0.32→0.78/game, snakes 1.8→4.3/game.
 
 ## P1 — Significant bugs
 
-- [ ] **Fix first-move ladder skip** — `game/engine.py:129`. Tile-0 entry returns before `_apply_ladders`; landing on ladder bottom 2-6 doesn't climb. Apply ladder/snake on entry too.
+- [x] **Fix first-move ladder skip** — `game/engine.py` `move_player`. Merged entry + normal paths so a player entering onto a ladder bottom now climbs. Verified (entry roll onto ladder bottom 3 → climbs to 40).
 - [x] **Remove dead bankruptcy penalty** — fixed during #4: now detects real bankruptcy via `bankrupt_count` delta instead of the never-true `points < 0`.
 - [x] **Exact-roll-to-win** — `game/engine.py` `move_player` now stays put on overshoot (was bounce-back). Exact roll required to land on 100. Easy-AI EV sim + README/knowledge updated to match. NOTE: endgame stall remains (no snakes above tile 80) — separate item: consider raising snake head cap to make near-100 strategic.
-- [ ] **Make bombs/bankruptcy less swingy or give agency** — design call. Reset-to-0 is uncontrollable dice punishment. No skill, brutal variance.
+- [WONTFIX / by design] **Bomb/bankruptcy swinginess** — user chose bankruptcy = reset to tile 0 ("bankruptcy must start at beginning"). Brutal variance is intended. Agency comes from keeping a bomb-survival buffer (the AI does this).
 
 ## P2 — Quality / polish
 
-- [ ] **Add tests** — board validity (BFS ≥10), cost formula, movement/bounce, snake placement rules. Zero automated verification now.
-- [ ] **Decouple PPO action from Expectimax** (optional, ambitious) — let net pick placement, not just buy/no-buy. Currently Hard AI = Easy AI + on/off switch.
-- [ ] **Finish or cut 3-4 player support** — `main.py:57` hardcodes 2 in hvh/hvai.
-- [ ] **Silence library stdout** — `game/board.py`/engine prints in hot training loop. Use a verbose flag.
-- [ ] **Remove dead code** — `ui/renderer.py` unreachable `pygame.quit()`; pointless chain while-loops in `game/engine.py`; `expected_value_after_roll` now unused after ROI rewrite.
-- [ ] **Console unicode crash (Windows)** — engine/AI prints use emojis + `→`; crashes on cp1252 console (`UnicodeEncodeError`). Surfaced during #2 testing. Fix: set stdout to UTF-8 in `main.py` (`sys.stdout.reconfigure(encoding='utf-8')`) or strip non-ASCII from logs. Affects `--console` mode on Windows.
-- [ ] **Fix README** — says PPO model not included; it is now.
-- [ ] **Align manuscript vs code** — doc claims exponential pricing + multi-ply Expectimax tree; code is linear + depth-1. Match doc to reality or vice versa.
+- [x] **Add tests** — `tests/test_core.py` (14 unittest cases): board counts+solvability, cost monotonic/floor/rises, overshoot stay-put, exact-roll win, entry ladder climb, strike range, clean-jump safe, owner immunity, board-snake exact-head, head cap, no-wall, no-chain, bomb bankruptcy. `python -m unittest tests.test_core`.
+- [~] **Decouple PPO action from Expectimax** — partial: PPO now Discrete(4) strategy space (roll/cheap/big/lurk) with catch-optimal placement helpers. Net picks strategy, not exact tiles. Good enough; full per-tile control left.
+- [x] **3-4 player support** — done: `main.py` setup (players 2-4 / humans 0-N / difficulty) + shuffled turn order; `console_game.play_game` takes prebuilt board; renderer N-player generic. (Caveat: 4×Hard FFA drags — left by design.)
+- [x] **Silence library stdout** — `game/log.py` `gprint` gates gameplay prints (board gen, AI buys, bankruptcy); `train_ppo` flips `VERBOSE=False` during `model.learn`.
+- [x] **Remove dead code** — removed unreachable `pygame.quit()` in `renderer.run`. KEPT `evaluate_state`/`expected_value_after_roll` deliberately (document the Expectimax EV/chance-node concept the manuscript describes).
+- [x] **Console unicode crash (Windows)** — UTF-8 stdout in `main.py`.
+- [x] **UI shop head cap** — was hardcoded `20-80`, now uses `MAX_SNAKE_HEAD` (90).
+- [x] **Fix README** — model now included; README rewritten.
+- [WONTFIX] **Align manuscript vs code** — manuscript is a PDF (can't edit here); code diverged further (sub-linear pricing, strike range, point steal). Divergence is documented in `knowledge/manuscript.md`.

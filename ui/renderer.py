@@ -402,10 +402,9 @@ class GameRenderer:
                 pygame.quit()
                 return
 
-        pygame.quit()
-
     def _human_shop(self, board, player) -> dict | None:
-        from game.engine import calculate_snake_cost, can_place_snake
+        from game.engine import (calculate_snake_cost, can_place_snake,
+                                 MAX_SNAKE_HEAD)
 
         if not player.can_buy_snake:
             return None
@@ -440,8 +439,8 @@ class GameRenderer:
         # Get head tile
         head = self._get_number_input(
             board,
-            f"SNAKE HEAD tile (20-80). Type number + ENTER.",
-            20, 80
+            f"SNAKE HEAD tile (20-{MAX_SNAKE_HEAD}). Type number + ENTER.",
+            20, MAX_SNAKE_HEAD
         )
         if head is None:
             return None

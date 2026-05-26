@@ -68,7 +68,8 @@ class Player:
         self.position = 0
         self.points = 0
         self.bankrupt_count += 1
-        print(f"  [BANKRUPT] {self.name} went bankrupt — back to tile 0!")
+        from game.log import gprint
+        gprint(f"  [BANKRUPT] {self.name} went bankrupt — back to tile 0!")
 
 
 @dataclass

@@ -249,29 +249,17 @@ def move_player(board: BoardState, player: Player,
         return logs
 
     new_pos = raw
-
-    # ── Entering the board from tile 0 ────────────────────────────
-    if old_pos == 0:
-        player.position = new_pos
-        logs.append(f"{player.name} rolled a {roll} "
-                    f"— enters the board at tile {new_pos}")
-
-        # No ladder/snake check on very first entry
-        # (snake heads start at tile 20+ so this is fine)
-        tile_pts = board.tiles.get(player.position, 10)
-        player.add_points(tile_pts)
-        logs.append(f"  💰 Earned {tile_pts} points "
-                    f"— total: {player.points}")
-        return logs
-
-    # ── Normal movement ───────────────────────────────────────────
-    logs.append(f"{player.name} rolled a {roll} "
-                f"— moves from {old_pos} to {new_pos}")
-
     player.position = new_pos
 
-    # Exact-landing triggers only: climb a ladder bottom, slide on a
-    # snake head. Jumping over a head is safe (no pass-over).
+    if old_pos == 0:
+        logs.append(f"{player.name} rolled a {roll} "
+                    f"— enters the board at tile {new_pos}")
+    else:
+        logs.append(f"{player.name} rolled a {roll} "
+                    f"— moves from {old_pos} to {new_pos}")
+
+    # Exact-landing triggers (applied on entry too): climb a ladder
+    # bottom, slide on a snake head. Jumping over a head is safe.
     _apply_ladders(board, player, logs)
     _apply_snakes(board, player, logs)
 

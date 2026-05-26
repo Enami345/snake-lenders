@@ -6,6 +6,7 @@ and evaluating whether buying a snake is worth it right now.
 
 import random
 
+from game.log import gprint
 from game.models import BoardState, Player, Snake
 from game.engine import (calculate_snake_cost, can_place_snake,
                          MAX_SNAKE_HEAD, MIN_SNAKE_COST, STRIKE_ZONE)
@@ -274,7 +275,7 @@ def expectimax_decision(board: BoardState, player: Player) -> dict | None:
     if player.points - cost < EASY_BUFFER:
         return None   # over-cautious hoarding
 
-    print(f"  [Easy] Buying snake {shop['head']}→{shop['tail']} (cost: {cost})")
+    gprint(f"  [Easy] Buying snake {shop['head']}→{shop['tail']} (cost: {cost})")
     return shop
 
 

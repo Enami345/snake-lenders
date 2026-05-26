@@ -260,7 +260,14 @@ def train_ppo(total_timesteps: int = 100_000):
         verbose=1,
     )
 
-    model.learn(total_timesteps=total_timesteps)
+    # Silence the per-step game logs (board gen, AI buys, bankruptcies)
+    # during training so only SB3's progress tables show.
+    from game import log
+    log.VERBOSE = False
+    try:
+        model.learn(total_timesteps=total_timesteps)
+    finally:
+        log.VERBOSE = True
     model.save(MODEL_PATH)
     print(f"[PPO] Training complete! Model saved to {MODEL_PATH}")
 
@@ -303,6 +310,7 @@ def ppo_decision(board: BoardState, player: Player, model) -> dict | None:
 
     shop = _action_to_shop(board, player, int(action))
     if shop:
-        print(f"  [PPO] action {int(action)} → snake "
-              f"{shop['head']}→{shop['tail']}")
+        from game.log import gprint
+        gprint(f"  [PPO] action {int(action)} → snake "
+               f"{shop['head']}→{shop['tail']}")
     return shop
