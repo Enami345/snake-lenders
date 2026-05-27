@@ -3,7 +3,21 @@
 Heads up team — this branch is a big gameplay + AI overhaul. Read this before
 you pull so the new rules don't surprise you.
 
-## Latest additions (web UI, multiplayer, stronger AI)
+## Newest (gameplay feel + web polish)
+- **Snakes are exact-head only now** — you only slide if you land exactly on a
+  snake head (no "near miss" bites). **Point-stealing removed.** Result: way
+  fewer bankruptcies, the game is fun instead of punishing.
+- **Mixed difficulty:** pick how many AIs are Hard (rest Easy) — menu has a
+  "Hard AIs" count; CLI `--hard-ais N`.
+- **Ladders** capped at 5–20 climb and spread out (no clustered/overlapping ladders).
+- **Web UI:** title page → config → loading screen → board with **per-step token
+  animation**; New game fully resets; refresh resumes; server is threaded (fixes
+  the browser hang).
+- Heads-up: with exact-head snakes the **Hard AI is ~level with Easy in bot-vs-bot
+  sims** (it still beats humans). The big PPO win rates were under the older
+  stronger-snake rule. Retraining for exact-head is optional.
+
+## Earlier additions (web UI, multiplayer, stronger AI)
 - **Web UI** (`python main.py --web` → http://localhost:8000). Plain
   HTML/CSS/JS, no extra deps — this is the new primary UI (teammate will
   restyle `ui/web/style.css`). Pygame still works.

@@ -125,14 +125,15 @@ Current reality vs manuscript:
 
 | Manuscript | Current code |
 |---|---|
-| Snakes bite on exact head | Player snakes have a **strike range** (head + 2 below), single-use, **steal points**, owner-immune; board snakes exact-head |
+| Snakes bite on exact head | **Exact-head only** (matches doc); single-use player traps, owner-immune; no point-stealing |
 | Exponential pricing α=1.3 | **Sub-linear** `2 × purchase_count × length^0.9`, min 12 |
-| Generous economy | **Scarce** income (~4-14/turn); depth-scaled bombs; bankruptcy → tile 0 |
+| Generous economy | **Scarce** income (~4-14/turn); depth-scaled bombs; bankruptcy → tile 0 (rare) |
 | Easy = Expectimax (smart) | Easy = **deliberately weak** Expectimax baseline |
-| Hard = PPO (long-term) | PPO **Discrete(4)** strategy space, catch-optimal placement, **beats Easy ~94%** |
+| Hard = PPO (long-term) | PPO **Discrete(4)**; under exact-head ~level with Easy in sims (was ~94% under an interim strike-range rule) |
 | Bounce-back on overshoot | **Exact roll to win** (stay put on overshoot) |
-| 2-player focus | **2-4 players**, 0-N humans, shuffled turns |
-| (UI unspecified) | **Web UI** (stdlib) primary; Pygame legacy |
+| Ladders jump to 90+ | Ladder climbs capped **5–20** tiles, spaced out (anti-clutter) |
+| 2-player focus | **2-4 players**, 0-N humans, **mixed Easy/Hard**, shuffled turns |
+| (UI unspecified) | **Web UI** (stdlib, title→config→loading→animated board) primary; Pygame legacy |
 
 If the manuscript must match the build for submission, update the PDF — the code
 is the source of truth now.

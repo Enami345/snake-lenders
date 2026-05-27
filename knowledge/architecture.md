@@ -16,6 +16,8 @@ BoardState(tiles, ladders, snakes, bombs, players, current_turn, turn_number)
 
 - `generate_board(seed, players)` — randomized, BFS-validated (`bfs_expected_turns >= 10`), retries ≤200.
 - `generate_tile_values` — **scarce** income (`BASE_TILE_VALUE=3`, ~4-14/turn).
+- `_place_ladders` — jump 5–20 tiles, endpoints spaced ≥ `MIN_LADDER_GAP=6`
+  (anti-clutter, well distributed across the board).
 - Constants: 7 ladders, 4 board snakes, 5 bombs.
 - Uses `gprint` (silent during training).
 
@@ -23,21 +25,22 @@ BoardState(tiles, ladders, snakes, bombs, players, current_turn, turn_number)
 
 Economy / snake constants:
 `BASE_SNAKE_PRICE=2`, `PRICE_ALPHA=0.9` (sub-linear), `MIN_SNAKE_COST=12`,
-`MAX_SNAKE_HEAD=90`, `STRIKE_ZONE=2`, `MAX_HEAD_RUN=2`,
-`STEAL_FLAT=15`/`STEAL_PCT=0.30`, `BOMB_BASE=18`/`BOMB_DEPTH=6`.
+`MAX_SNAKE_HEAD=90`, `STRIKE_ZONE=0` (exact-head only), `MAX_HEAD_RUN=2`,
+`BOMB_BASE=18`/`BOMB_DEPTH=6`. (Point-stealing was removed.)
 
 Key functions:
 - `calculate_snake_cost` — `max(BASE * purchase_count * length^ALPHA, MIN)`.
 - `can_place_snake` — validates: head>tail, head ≤ MAX_SNAKE_HEAD, not occupied/
   ladder, no chain, **no wall** (`_head_run_length` ≤ MAX_HEAD_RUN), affordable.
 - `move_player` — overshoot=stay put; entry + normal share one path (entry
-  **does** apply ladders/snakes now); collect points; bomb (depth-scaled, can bankrupt).
-- `_striking_snake(board, tile, mover_id)` — player snakes (`owner>=0`) bite within
-  STRIKE_ZONE below head; board snakes exact-head; **owner immune**; highest head wins.
-- `_apply_snakes` — slides on strike, `_steal_points` (rob to owner), `_consume_snake`
-  (player snakes single-use). Loop terminates (always moves down).
+  **does** apply ladders/snakes); collect points; bomb (depth-scaled, can bankrupt);
+  returns a `move` breakdown {from, landing, final, roll} for UI animation.
+- `_striking_snake(board, tile, mover_id)` — bite if landed within `STRIKE_ZONE`
+  tiles below head (0 = exact head only); **owner immune**; highest head wins.
+- `_apply_snakes` — slides to tail, `_consume_snake` (player snakes single-use).
+  No point theft. Loop terminates (always moves down).
 - `_apply_ladders` — exact climb.
-- `buy_snake`, `do_turn(board, shop_decision)` → {logs, winner, bought}.
+- `buy_snake`, `do_turn(board, shop_decision)` → {logs, winner, bought, move}.
 
 ## Easy AI (`ai/expectimax.py`) — deliberately WEAK
 
@@ -59,29 +62,38 @@ Key functions:
   win-denial lurk. `step()` = agent turn then opponents play their own Expectimax;
   reward = ±100 win/loss + bounded progress delta + opponent-setback + bankruptcy
   penalty. Trained vs the weak Easy bot.
-- `train_ppo` — 4 parallel envs, MlpPolicy; silences gameplay logs during learn.
+- `train_ppo(total_timesteps, opponent_pool, save_path)` — 4 parallel envs;
+  `opponent_pool=True` trains vs {Easy, Strong heuristic, frozen best PPO}.
 - `load_ppo_model` — tries `MODEL_PATH` then `BACKUP_PATH` (survives mid-write
   training); `ppo_decision` deterministic inference.
-- **Result: Hard beats Easy ~94%** (300 games). AI-vs-AI ~50%.
+- **Result under the OLD strike-range rule:** Hard beat Easy ~89-94%.
+  **Under the CURRENT exact-head rule** the shipped model is rule-mismatched →
+  ~42% vs Easy in sim (still beats humans). Retrain on exact-head = optional,
+  caps ~55% (dice ceiling). See `training.md`.
 
 ## Setup + Entry (`main.py`)
 
-- Flags: `--players --humans --difficulty --web --console --train --steps --seed --phase`.
-- `resolve_setup` (prompt or flags) → `build_players` (humans + AI, **shuffled**,
-  ids reassigned 0..N-1) → `load_ppo_if_needed` (graceful fallback) → board → run.
-- `--web` → `ui.web.server.run_server`; else Pygame; `--console` → terminal.
+- Flags: `--players --humans --hard-ais --difficulty --web --console --train --steps --seed --phase`.
+- `resolve_setup` → `(n_players, n_humans, n_hard)`; `build_players` makes humans +
+  `n_hard` Hard AIs + rest Easy (**mixed**), **shuffled**, ids 0..N-1 →
+  `load_ppo_if_needed` (graceful fallback) → board → run.
+- `--hard-ais N` sets how many AIs are Hard; `--difficulty` is the all/none shortcut.
+- `--web` → `ui.web.server.run_server` (threaded); else Pygame; `--console` → terminal.
 - Forces UTF-8 stdout (Windows emoji/arrow logs).
 
 ## Web UI (`ui/web/`) — PRIMARY
 
-- `server.py` — stdlib `http.server`. In-memory `Session`. Endpoints:
-  `GET /` (index), `/app.js`, `/style.css`; `GET /api/state`; `POST /api/new`
-  (players/humans/difficulty), `/api/buy` (human snake), `/api/turn` (advance;
-  AI auto-decides), `/api/cost`.
-- `index.html` — setup screen → board + panel.
-- `app.js` — board grid (boustrophedon), tokens, snake shop, log; **resumes** an
-  in-progress game on refresh via `/api/state`.
-- `style.css` — minimal placeholder (teammate redesigns).
+- `server.py` — stdlib **`ThreadingHTTPServer`** (single-thread deadlocks browser
+  keep-alive connections). In-memory `Session`. Endpoints: `GET /`, `/app.js`,
+  `/style.css`; `GET /api/state`; `POST /api/new` (players/humans/**hard_ais**),
+  `/api/buy`, `/api/turn` (advance; AI auto-decides; returns `move` for animation),
+  `/api/cost`, `/api/quit` (reset session). All POSTs wrapped in try/except →
+  500 + traceback (no silent hangs).
+- `index.html` — **title page → setup → loading overlay → board**.
+- `app.js` — screen flow, staged loading bar, board grid (boustrophedon), tokens,
+  **per-step token animation** (walk dice then ladder/snake jump), shop, log;
+  **resumes** an in-progress game on refresh; New game calls `/api/quit`.
+- `style.css` — minimal placeholder (teammate redesigns), incl. overlay + bar.
 
 ## Logging (`game/log.py`)
 

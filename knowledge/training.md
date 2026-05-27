@@ -2,6 +2,16 @@
 
 How the Hard (PPO) AI is trained, how strong it is, and what we measured.
 
+> ⚠️ **IMPORTANT — rule change after these numbers were measured.** The win-rate
+> battery below was measured under the **strike-range** snake rule (snakes bit
+> within a few tiles below the head, ~50% catch). The game has since switched to
+> **exact-head only** (`STRIKE_ZONE=0`) and **point-stealing was removed**, for a
+> fairer, less-bankruptcy-heavy game. Under exact-head, snakes fire ~1/6, the
+> snake economy is weak, and the **shipped PPO (trained on strike-range) is
+> rule-mismatched → ~42% vs Easy in bot-vs-bot sims** (it still beats human
+> players). Retraining on exact-head is optional and caps around ~55% (dice
+> ceiling). The numbers below document what the strike-range training achieved.
+
 ## Timesteps vs games
 - PPO trains in **environment steps**; 1 step = one full round (agent turn +
   opponents). ~**30-50 steps per game**.

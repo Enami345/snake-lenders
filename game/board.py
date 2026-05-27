@@ -15,6 +15,7 @@ NUM_INIT_SNAKES = 4
 NUM_BOMBS       = 5
 MIN_AVG_TURNS   = 10
 MAX_RETRIES     = 200
+MIN_LADDER_GAP  = 6     # min tile spacing between ladder endpoints (anti-clutter)
 BOMB_DEDUCTION  = 30
 BASE_TILE_VALUE = 3     # scarce income — points must be managed, not hoarded
 
@@ -34,9 +35,10 @@ def generate_tile_values(seed: int) -> dict:
 
 
 def _place_ladders(rng: random.Random, forbidden: set) -> list:
-    ladders = []
-    attempts = 0
-    while len(ladders) < NUM_LADDERS and attempts < 1000:
+    ladders   = []
+    endpoints = []          # every bottom/top placed so far (for spacing)
+    attempts  = 0
+    while len(ladders) < NUM_LADDERS and attempts < 2000:
         attempts += 1
         bottom = rng.randint(2, 80)
         jump   = rng.randint(5, 20)   # cap climbs so no absurd 42->90 leaps
@@ -46,10 +48,16 @@ def _place_ladders(rng: random.Random, forbidden: set) -> list:
             continue
         if bottom in forbidden or top in forbidden:
             continue
+        # Spread them out: keep every endpoint at least MIN_LADDER_GAP tiles
+        # from existing ladder endpoints so they don't clutter / overlap.
+        if any(abs(bottom - e) < MIN_LADDER_GAP or abs(top - e) < MIN_LADDER_GAP
+               for e in endpoints):
+            continue
 
         ladders.append(Ladder(bottom=bottom, top=top))
         forbidden.add(bottom)
         forbidden.add(top)
+        endpoints.extend((bottom, top))
 
     return ladders
 

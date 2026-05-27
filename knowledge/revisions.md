@@ -56,3 +56,12 @@ Ranked by importance. P0 = breaks core premise or grader claims. P1 = real bugs.
 - [x] **PPO improvements (opponent pool / self-play)** — `train_ppo(opponent_pool=True)` trains vs {Easy, Strong heuristic, frozen best PPO}; added `expectimax.strong_decision`. Trained 2.5M; promoted the self-play model to `ai/ppo_model.zip` (more robust vs Strong: 83%→89%; ~tie head-to-head vs plain 2.5M). Removed stale `ppo_model_100k.zip`; refreshed backup.
 - [x] **Model load resilience** — `load_ppo_model` tries main → backup (survives mid-write training); graceful Expectimax fallback. AI logs use real player names + `(PPO)` tag.
 - [x] **AI training + quality fully documented** — see [training.md](training.md) (timesteps↔games, plateau, model lineage, full win-rate battery).
+
+## Gameplay-feel pass (latest)
+
+- [x] **Snakes → exact-head only** (`STRIKE_ZONE=0`) — bite only on landing exactly on a head (user's chosen rule). Removes "near-miss" bites.
+- [x] **Removed point-stealing** — bite just slides to tail. Killed the bankruptcy death-spiral; passive-human bankruptcies ~0.21/game.
+- [x] **Mixed Easy/Hard AIs** — `build_players(n_players, n_humans, n_hard)`; menu "Hard AIs" count; CLI `--hard-ais N` (`--difficulty` = all/none shortcut).
+- [x] **Ladder anti-clutter** — jump capped 5–20; endpoints spaced ≥ `MIN_LADDER_GAP=6` so ladders distribute across the board (no overlapping pile).
+- [x] **Web polish** — title page → config → **loading overlay (progress bar)** → board; **per-step token animation** (`do_turn` returns a `move` breakdown); **threaded server** (fixes browser hang); `/api/quit` reset so New game / refresh behave; POST error-handling (no silent hangs).
+- ⚠️ **Tradeoff (documented):** exact-head makes snakes weak → shipped PPO ~level with Easy in bot-vs-bot sims (~42%); still beats humans. Retrain-for-exact-head optional (declined). See [training.md](training.md).

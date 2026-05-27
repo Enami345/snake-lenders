@@ -70,9 +70,9 @@ python main.py --web        # Web UI → http://localhost:8000  (recommended)
 python main.py --console    # play in the terminal
 python main.py              # legacy Pygame UI
 
-# Setup is asked interactively (players 2-4 / humans 0-N / AI difficulty),
+# Setup is asked interactively (players 2-4 / humans 0-N / how many Hard AIs),
 # or skip the prompts with flags:
-python main.py --players 4 --humans 1 --difficulty hard
+python main.py --players 4 --humans 1 --hard-ais 1     # you + 1 Hard + 2 Easy
 python main.py --players 2 --humans 2                  # local 2-human
 python main.py --players 4 --humans 0 --difficulty easy --web   # AI watch mode
 
@@ -107,27 +107,25 @@ main file is missing/mid-write; if neither loads, Hard falls back to Expectimax.
 
 ### Movement
 - Roll a 6-sided die each turn
-- Land on a ladder bottom → climb to the top
+- Land on a ladder bottom → climb to the top. Ladder climbs are capped at 5–20
+  tiles and spread out across the board (no clustered/overlapping ladders).
 - **Exact roll to win:** overshooting tile 100 is an invalid move — you **stay
   put** (e.g. tile 97 + roll 5 → stays at 97). You must land on 100 exactly.
 
-### Snakes
-- **Board snakes** are fixed terrain — they bite only on an **exact-head** landing.
-- **Player-placed snakes are active traps with a strike range:** you're bitten if
-  you land on the head **or the few tiles just below it**. Jumping clean over a
-  head is safe. A well-placed trap (head sitting inside the target's dice range)
-  catches a passing opponent most of the time.
+### Snakes — exact-head only
+- You slide **only when you land exactly on a snake head.** Landing on a tile
+  *below* the head, or jumping clean *over* it, is safe.
+- A bite just **slides you down to the tail** (no point-stealing).
 - **Owner immunity:** your own snakes never bite you.
-- A snake bite **slides you to the tail AND robs your points** (a flat amount plus
-  a slice of your wallet), paid to the snake's owner.
 - Player snakes are **single-use**: once a snake fires it's consumed, freeing a
-  slot so you can earn points and place another.
+  slot so you can place another. Board snakes are permanent terrain.
 
 ### Economy (the heart of the game)
 - **Tile income is scarce** (~4–14 points/turn) — you must manage points, not
   hoard mindlessly.
 - **Bombs scale with board depth** (deeper = nastier) and can push you below zero
-  → **bankruptcy**: sent **back to tile 0** with zero points. Brutal.
+  → **bankruptcy**: sent **back to tile 0** with zero points (rare now, ~1 per 5
+  games for a passive player).
 - Tile 100 gives a small finish bonus.
 
 ### Snake Shop
@@ -147,48 +145,45 @@ main file is missing/mid-write; if neither loads, Hard falls back to Expectimax.
 
 ## AI Opponents
 
-The two difficulties are genuinely different in skill.
+Pick how many AIs are **Hard** (rest are **Easy**) — you can mix them.
 
 ### Easy — Expectimax (deliberately weak)
 A simple, beatable baseline: it reacts late, hesitates, hoards too many points,
-and only ever places cheap short traps — never the big knockbacks or win-denial
-lurks. Good for learning the game. No training needed.
+and only ever places cheap short traps. Good for learning the game. No training.
 
 ### Hard — PPO (Proximal Policy Optimization)
-A neural-network agent trained via reinforcement learning (`stable-baselines3`):
-- Chooses a **strategy** each turn from a 4-action space — *roll* / *cheap trap* /
-  *save for a devastating snake* / *win-denial lurk*.
-- Places traps **catch-optimally** (head positioned so its strike range covers the
-  target's dice range) for maximum knockback + point theft, keeps a bomb buffer,
-  and parks win-denial snakes against an almost-finished opponent.
-- Trained against an **opponent pool / self-play** ({Easy, Strong heuristic, frozen
-  best PPO}); rewarded for winning and for the setback it inflicts.
-- Shipped model is **2.5M steps**. Measured: **~89-91% vs Easy, ~89% vs a strong
-  heuristic**, and dominates 4-player free-for-alls (~80% vs 3 strong bots, random
-  = 25%). See `knowledge/training.md` for the full evaluation.
-- A trained model ships with the repo. Retrain anytime with `python main.py
-  --train` (or `--steps 300000` for longer).
+A neural-network agent (`stable-baselines3`) that chooses a **strategy** each turn
+from a 4-action space (roll / cheap trap / save-for-big / win-denial lurk),
+trained by self-play against an opponent pool. A trained model ships with the repo.
+
+> Note: under the current **exact-head** snake rule, snakes fire rarely (~1/6), so
+> the snake economy is light and the shipped PPO is roughly level with Easy in
+> bot-vs-bot simulations (it still beats human players). The PPO's big win rates
+> (~89-94%) were under an earlier strike-range rule. Retraining for exact-head is
+> optional. Full detail in `knowledge/training.md`.
 
 ---
 
 ## What changed in this refactor
 
-This branch reworks the game so the economy is genuinely strategic and the AIs
-are real opponents. Summary of the overhaul:
+This branch reworks the game (economy, AIs, a web UI, local multiplayer).
+
+**Latest tuning (current rules)**
+- Snakes are **exact-head only** and **don't steal points** — far fewer
+  bankruptcies, fairer play. (An earlier strike-range + steal version made the AI
+  strong but caused bankruptcy spirals.)
+- Ladder climbs capped at 5–20 tiles and **spread out** (no clustered ladders).
+- **Mixed difficulty:** choose how many AIs are Hard (rest Easy).
+- **Web UI** with a title page → config → loading screen → animated board.
 
 **Movement & win condition**
-- Overshooting tile 100 now means **stay put** (exact roll to win) instead of the
-  old bounce-back.
+- Overshooting tile 100 means **stay put** (exact roll to win).
 - Fixed a bug where entering the board could skip a ladder.
 
 **Snakes**
-- Player snakes gained a **strike range** (head + 2 tiles) so well-placed traps
-  reliably fire (~50%), while board snakes stay exact-head terrain.
-- Snakes are now **single-use** (consumed on hit) and **steal points** from the
-  victim to their owner.
-- Added an **anti-wall placement rule** so snake heads can't form an impassable
-  cluster. (Pass-over triggering was prototyped and reverted — long snakes became
-  softlocking walls.)
+- Single-use traps, owner-immune, exact-head trigger; board snakes are terrain.
+- **Anti-wall placement rule** so heads can't form an impassable cluster.
+  (Pass-over triggering was prototyped and reverted — long snakes became walls.)
 
 **Economy & bankruptcy**
 - **Slashed tile income** and switched snake pricing to **sub-linear** so points
