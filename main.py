@@ -137,8 +137,8 @@ def main():
 
     # ── Web UI (browser handles setup + game) ─────────────────────
     if args.web:
-        from ui.web.server import run_server
-        run_server()
+        from server import run_server_flask
+        run_server_flask()
         return
 
     # ── Phase 1 board test ────────────────────────────────────────
