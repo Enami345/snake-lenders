@@ -156,11 +156,12 @@ A neural-network agent (`stable-baselines3`) that chooses a **strategy** each tu
 from a 4-action space (roll / cheap trap / save-for-big / win-denial lurk),
 trained by self-play against an opponent pool. A trained model ships with the repo.
 
-> Note: under the current **exact-head** snake rule, snakes fire rarely (~1/6), so
-> the snake economy is light and the shipped PPO is roughly level with Easy in
-> bot-vs-bot simulations (it still beats human players). The PPO's big win rates
-> (~89-94%) were under an earlier strike-range rule. Retraining for exact-head is
-> optional. Full detail in `knowledge/training.md`.
+> Note: the shipped model is **exact-head-trained (2.5M, self-play)** and is
+> **proven stronger than Easy (~54-56%)** — it just doesn't dominate, because
+> exact-head snakes fire only ~1/6 and the dice cap the gap. The skill difference
+> shows in *behavior*: Hard saves up for ~50-tile knockbacks + finish-line traps,
+> Easy only sprinkles short cheap snakes (avg length 53 vs 7.5). Full detail in
+> `knowledge/training.md`.
 
 ---
 

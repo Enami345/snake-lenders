@@ -2,15 +2,23 @@
 
 How the Hard (PPO) AI is trained, how strong it is, and what we measured.
 
-> ⚠️ **IMPORTANT — rule change after these numbers were measured.** The win-rate
-> battery below was measured under the **strike-range** snake rule (snakes bit
-> within a few tiles below the head, ~50% catch). The game has since switched to
-> **exact-head only** (`STRIKE_ZONE=0`) and **point-stealing was removed**, for a
-> fairer, less-bankruptcy-heavy game. Under exact-head, snakes fire ~1/6, the
-> snake economy is weak, and the **shipped PPO (trained on strike-range) is
-> rule-mismatched → ~42% vs Easy in bot-vs-bot sims** (it still beats human
-> players). Retraining on exact-head is optional and caps around ~55% (dice
-> ceiling). The numbers below document what the strike-range training achieved.
+> ⚠️ **CURRENT shipped model = exact-head, 2.5M steps, opponent-pool/self-play.**
+> Rules: **exact-head snakes** (`STRIKE_ZONE=0`), **no point-stealing**.
+> Measured vs the (reasonable, weak) Easy bot: **~54-56% — PPO is proven > Easy.**
+> It does NOT dominate because exact-head snakes fire only ~1/6, so the dice cap
+> the gap (~57% even for optimal play). The skill gap is real but shows in
+> *behavior*, not the scoreline:
+>
+> | Behavior (300 games, exact-head) | Easy | Hard |
+> |---|---|---|
+> | snakes/game | 2.76 | 1.23 |
+> | **avg snake length (knockback)** | **7.5** | **52.8** |
+> | snake mix | almost all cheap/short | big knockbacks + win-denial lurks |
+>
+> Hard saves up and drops devastating ~50-tile snakes + finish-line traps; Easy
+> sprinkles weak short ones. 60%+ would need a wider bite (strike zone ≥1) or a
+> near-passive Easy — both declined. The strike-range numbers later in this file
+> are historical (an interim rule that hit ~89-94%).
 
 ## Timesteps vs games
 - PPO trains in **environment steps**; 1 step = one full round (agent turn +

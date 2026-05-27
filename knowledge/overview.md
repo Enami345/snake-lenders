@@ -115,11 +115,11 @@ Web flow: **title page → config → loading screen → board.** Config (or fla
 - **Hard = PPO**, 4-action strategy space (roll / cheap trap / save-for-big /
   win-denial lurk). Beats human players in practice.
 - **You can mix difficulties** — choose how many AIs are Hard (rest Easy).
-- ⚠️ Honest note: under the current **exact-head** rule, snakes fire ~1/6, so
-  the snake economy is weak and the shipped PPO (trained on an older
-  stronger-snake rule) is **~level with Easy in bot-vs-bot sims** (it doesn't
-  dominate). It still plays a sensible game and beats humans. See
-  [training.md](training.md). Falls back to Expectimax if the model can't load.
+- Shipped Hard model = **exact-head-trained, 2.5M steps, self-play pool**.
+  **Proven > Easy (~54-56%)** but doesn't dominate — exact-head snakes fire ~1/6
+  so dice cap the gap. The skill shows in *behavior*: Hard places ~50-tile
+  knockbacks + win-denial lurks; Easy only short cheap snakes (avg length 53 vs
+  7.5). See [training.md](training.md). Falls back to Expectimax if load fails.
 
 See [architecture.md](architecture.md) for the code map, [status.md](status.md)
 for current state, [training.md](training.md) for AI training + measured strength,

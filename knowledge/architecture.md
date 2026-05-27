@@ -66,10 +66,10 @@ Key functions:
   `opponent_pool=True` trains vs {Easy, Strong heuristic, frozen best PPO}.
 - `load_ppo_model` — tries `MODEL_PATH` then `BACKUP_PATH` (survives mid-write
   training); `ppo_decision` deterministic inference.
-- **Result under the OLD strike-range rule:** Hard beat Easy ~89-94%.
-  **Under the CURRENT exact-head rule** the shipped model is rule-mismatched →
-  ~42% vs Easy in sim (still beats humans). Retrain on exact-head = optional,
-  caps ~55% (dice ceiling). See `training.md`.
+- **Shipped model: exact-head-trained, 2.5M, self-play pool.** Proven **> Easy
+  (~54-56%)**; doesn't dominate (exact-head snakes fire ~1/6 → dice cap ~57%).
+  Skill shows in behavior: Hard avg snake length ~53 (+ win-denial lurks) vs
+  Easy ~7.5. (Historical: an interim strike-range rule hit ~89-94%.) See `training.md`.
 
 ## Setup + Entry (`main.py`)
 

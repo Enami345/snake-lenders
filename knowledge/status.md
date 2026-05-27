@@ -42,10 +42,12 @@ refresh-resume. (Pending a commit.)
 
 ## Known Notes / Caveats
 
-1. **AI difficulty under exact-head:** snakes fire ~1/6, so the snake economy is
-   weak and the shipped PPO (trained on the old strike-range rule) is ~level with
-   Easy in **bot-vs-bot** sims (~42%). It still beats human players. Retraining
-   on exact-head is optional (caps ~55%, dice ceiling). See `training.md`.
+1. **AI difficulty under exact-head:** shipped PPO is now **exact-head-trained
+   (2.5M, self-play)** and is **proven > Easy (~54-56%)**, but doesn't dominate —
+   exact-head snakes fire ~1/6 so dice cap the gap (~57%). The skill gap is real
+   in behavior (Hard avg snake length ~53 + win-denial lurks vs Easy ~7.5).
+   60%+ would need a wider bite or a near-passive Easy (both declined). See
+   `training.md`.
 2. **Web UI not yet tested in a real browser session** (multi-human shop flow) —
    logic + API smoke-tested only. Needs a live pass.
 3. **4×Hard FFA drags** (long games) — intentional nightmare, left as-is.
