@@ -35,7 +35,8 @@ venv\Scripts\activate            # Windows  (use: source venv/bin/activate on ma
 pip install -r requirements.txt
 ```
 
-`requirements.txt` pulls in: `pygame`, `stable-baselines3`, `gymnasium`, `numpy`.
+`requirements.txt` pulls in: `pygame`, `stable-baselines3`, `gymnasium`, `numpy`,
+`flask`, `flask-cors` (the web UI runs on Flask).
 
 ---
 
@@ -54,8 +55,10 @@ snake-lenders/
 │   ├── expectimax.py    # Easy AI — cunning saboteur + placement strategies
 │   ├── ppo_agent.py     # Hard AI — PPO env, training, inference
 │   └── ppo_model.zip    # Trained PPO model (included)
+├── server.py            # Web UI backend — Flask, engine-driven (python main.py --web)
+├── web/                 # Web UI frontend — index.html + app.js + style.css (thin client)
 ├── ui/
-│   └── renderer.py      # Pygame board + side panel + snake shop
+│   └── renderer.py      # legacy Pygame board + side panel + snake shop
 ├── docs/                # Case study manuscript (PDF)
 └── knowledge/           # Design notes / change log for the refactor
 ```
@@ -66,7 +69,7 @@ snake-lenders/
 
 ```bash
 # from the project root, with the venv activated
-python main.py --web        # Web UI → http://localhost:8000  (recommended)
+python main.py --web        # Web UI → http://localhost:5000  (recommended)
 python main.py --console    # play in the terminal
 python main.py              # legacy Pygame UI
 

@@ -105,7 +105,7 @@
             <ul>
               <li><strong>Exact Win:</strong> Stay put if you overshoot tile 100.</li>
               <li><strong>Economy:</strong> Single-use traps cost more per purchase.</li>
-              <li><strong>Traps:</strong> Hit within 4 tiles of head to slide and get robbed!</li>
+              <li><strong>Traps:</strong> Land exactly on a snake head to slide to its tail.</li>
               <li><strong>Bankruptcy:</strong> Under 0 pts resets you to tile 0.</li>
             </ul>
           </div>
@@ -186,25 +186,12 @@
           <!-- HUMAN SHOP CARD (Dynamic visibility) -->
           <div id="shop-panel" class="shop-panel hidden">
             <h4 class="shop-title">🐍 Snake Shop</h4>
-            <div class="shop-fields">
-              <div class="shop-field">
-                <label>Head (20-90)
-                  <input type="number" id="input-shop-head" min="20" max="90" class="shop-input" />
-                </label>
-              </div>
-              <div class="shop-field">
-                <label>Tail (1-89)
-                  <input type="number" id="input-shop-tail" min="1" max="89" class="shop-input" />
-                </label>
-              </div>
-            </div>
-            
-            <div class="shop-cost-preview">
-              <span id="shop-preview-label">Cost Preview:</span>
-              <strong id="shop-preview-cost">-- pts</strong>
-            </div>
+            <!-- hidden inputs hold the chosen head/tail from board clicks -->
+            <input type="hidden" id="input-shop-head" />
+            <input type="hidden" id="input-shop-tail" />
 
-            <button id="btn-shop-buy" class="btn-premium btn-glow btn-small w-100">🛒 Buy &amp; Place Snake</button>
+            <button id="btn-shop-place" class="btn-premium btn-glow btn-small w-100">🎯 Place a Snake</button>
+            <div id="shop-instruction" class="shop-instruction"></div>
             <div id="shop-feedback" class="shop-feedback-message"></div>
           </div>
 
@@ -403,13 +390,12 @@
           <li><strong>Anti-Wall:</strong> You cannot place a snake that would extend a consecutive run of adjacent snake heads past 2.</li>
         </ul>
 
-        <h3>🐍 Strike Ranges &amp; Immunity</h3>
+        <h3>🐍 Snake Bites &amp; Immunity</h3>
         <ul>
-          <li><strong>Board snakes</strong> bite only on exact head landing.</li>
-          <li><strong>Player snakes</strong> have an active **strike range** covering the head and 4 tiles below it.</li>
-          <li><strong>Immunity:</strong> You are 100% immune to your own traps.</li>
-          <li><strong>Point Theft:</strong> Getting bitten slides you back to the tail AND **robs** points from your wallet, transferring them directly to the trap's owner!</li>
-          <li>Once a player snake bites, it is **consumed** and removed from the board.</li>
+          <li>Snakes bite only when you land <strong>exactly on the head tile</strong>. Landing below it or jumping clean over is safe.</li>
+          <li><strong>Immunity:</strong> you are 100% immune to your own traps.</li>
+          <li>A bite just <strong>slides you down to the tail</strong> — no point-stealing.</li>
+          <li>Once a player snake bites, it is <strong>consumed</strong> and removed from the board.</li>
         </ul>
 
         <h3>💣 Bombs &amp; Bankruptcy</h3>
@@ -425,6 +411,29 @@
           <li><strong>Easy (Expectimax):</strong> deliberate weak heuristic, reacts late, hoards points, only buys short cheap traps.</li>
           <li><strong>Hard (PPO Neural Network):</strong> trained via reinforcement learning self-play, places catch-optimal traps, parks win-denials near the finish line, manages points aggressively.</li>
         </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MODAL: CONFIRM SNAKE PURCHASE ── -->
+  <div id="modal-snake-confirm" class="modal hidden">
+    <div class="modal-content glassmorphism modal-small">
+      <div class="modal-header">
+        <h2>🐍 Confirm Snake</h2>
+        <span class="btn-modal-close" id="btn-snake-cancel">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div class="confirm-snake-line">Placing <strong id="confirm-snake-route">— ➔ —</strong>
+          (length <span id="confirm-snake-len">—</span>)</div>
+        <div class="confirm-snake-grid">
+          <div><span>Cost</span><strong id="confirm-snake-cost">— pts</strong></div>
+          <div><span>Your points now</span><strong id="confirm-snake-now">— pts</strong></div>
+          <div><span>Points after</span><strong id="confirm-snake-after">— pts</strong></div>
+        </div>
+        <div class="confirm-snake-actions">
+          <button id="btn-snake-confirm" class="btn-premium btn-glow w-100">✅ Buy &amp; Place</button>
+          <button id="btn-snake-back" class="btn-premium btn-secondary w-100">↩️ Pick again</button>
+        </div>
       </div>
     </div>
   </div>

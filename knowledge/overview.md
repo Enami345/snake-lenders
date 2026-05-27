@@ -19,10 +19,11 @@ tail. Plays in the browser (web UI) with up to 4 players, any mix of humans/AI.
 | Language | Python 3.10+ (tested on 3.11) |
 | Easy AI | Expectimax (deliberately weak heuristic) |
 | Hard AI | PPO via stable-baselines3 + Gymnasium |
-| UI | **Web (stdlib http.server + HTML/CSS/JS)** — primary; Pygame renderer still present |
-| Deps | pygame, stable-baselines3, gymnasium, numpy (`requirements.txt`) |
+| UI | **Web (Flask + canvas HTML/CSS/JS)** — primary, engine-driven; Pygame renderer legacy |
+| Deps | pygame, stable-baselines3, gymnasium, numpy, **flask, flask-cors** (`requirements.txt`) |
 
-Web UI uses **no extra dependency** (Python stdlib only).
+Web UI is a **thin client** over the Python engine (single source of truth) — it
+renders state and sends actions; all rules run server-side in `game/`.
 
 ---
 
@@ -44,8 +45,10 @@ snake-lenders/
 │   ├── ppo_agent.py     # Hard bot: 4-action PPO env, training, inference
 │   ├── ppo_model.zip    # trained model (included)
 │   └── ppo_model_backup.zip  # stable fallback (used if main is mid-write)
+├── server.py            # PRIMARY UI backend: Flask, engine-driven (--web)
+├── web/                 # PRIMARY UI frontend: index.html + app.js + style.css (thin client)
 ├── ui/
-│   ├── web/             # PRIMARY UI: server.py + index.html + style.css + app.js
+│   ├── web/             # legacy stdlib web UI (unused)
 │   └── renderer.py      # legacy Pygame UI (kept)
 ├── tests/test_core.py   # 14 unittest cases
 ├── docs/                # case study manuscript (PDF)
@@ -60,7 +63,7 @@ snake-lenders/
 python -m venv venv && venv\Scripts\activate
 pip install -r requirements.txt
 
-python main.py --web        # Web UI → http://localhost:8000  (recommended)
+python main.py --web        # Web UI → http://localhost:5000  (recommended)
 python main.py --console    # terminal
 python main.py              # legacy Pygame UI
 

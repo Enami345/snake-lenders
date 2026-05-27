@@ -56,6 +56,11 @@ let comboPopups = [];
 let boardShakeOffset = { x: 0, y: 0 };
 let currentHoveredTile = null;
 
+// ── Chess-style snake placement state ──
+let placement = { active: false, head: null, validHeads: new Set(), validTails: new Set() };
+let previewSnake = null;   // {head, tail, owner} dashed preview (human pick or AI)
+let growAnim = null;       // {head, tail, owner, progress 0..1} head→tail grow animation
+
 // Player names and stable colors
 const NEON_COLORS = {
   0: "#ff4a5a", // Neon Red
@@ -588,11 +593,15 @@ const api = async (path, body) => {
         body: JSON.stringify(body) }
     : {};
   const r = await fetch(path, opt);
-  if (!r.ok) {
-    const err = await r.json();
-    throw new Error(err.error || "Server request failed.");
+  const text = await r.text();
+  let data;
+  try { data = JSON.parse(text); }
+  catch {
+    throw new Error(`Server returned non-JSON for ${path} (HTTP ${r.status}). ` +
+                    `Restart the server (python main.py --web) to load latest routes.`);
   }
-  return r.json();
+  if (!r.ok) throw new Error(data.error || "Server request failed.");
+  return data;
 };
 
 
@@ -810,35 +819,29 @@ $("btn-lobby-start").addEventListener("click", async () => {
   }
 
   try {
-    const startState = await api("/api/generate-board", { seed, players: playersPayload });
-    
-    // Initialize Game Session locally
+    // The server builds + owns the game (engine = source of truth).
+    const startState = await api("/api/new", { seed, players: playersPayload });
+
     gameSession = {
       started: true,
       tiles: startState.tiles,
       ladders: startState.ladders,
       snakes: startState.snakes,
       bombs: startState.bombs,
-      players: startState.players,
+      players: startState.players,            // already include snake_count etc.
       current_turn: startState.current_turn,
       turn_number: startState.turn_number,
       winner: null,
-      seed: startState.seed,
+      seed: seed,
       stats: {},
       actionHistory: []
     };
 
-    // Reset statistics cards
+    // Client-only per-player stats (gameplay rules live on the server).
     gameSession.players.forEach(p => {
       gameSession.stats[p.id] = {
-        snakesPlaced: 0,
-        bittenCount: 0,
-        bankruptCount: 0,
-        laddersClimbed: 0,
-        bombsHit: 0,
-        pointsEarned: 0,
-        pointsStolen: 0,
-        turnsTaken: 0
+        snakesPlaced: 0, bittenCount: 0, bankruptCount: 0, laddersClimbed: 0,
+        bombsHit: 0, pointsEarned: 0, pointsStolen: 0, turnsTaken: 0
       };
     });
 
@@ -947,48 +950,56 @@ function drawBoard() {
       ctx.font = "600 11px 'Outfit', sans-serif";
       ctx.fillStyle = tileNum === 100 ? "#f5c443" : "rgba(255, 255, 255, 0.15)";
       ctx.fillText(tileNum, x + 8, y + 18);
+
+      // Tile point value (income earned for landing here)
+      const pv = gameSession.tiles ? gameSession.tiles[tileNum] : undefined;
+      if (pv !== undefined && tileNum !== 100) {
+        ctx.font = "600 9px 'Outfit', sans-serif";
+        ctx.fillStyle = "rgba(245, 196, 67, 0.55)";
+        ctx.fillText(`+${pv}`, x + 7, y + size - 7);
+      }
     }
   }
 
-  // Spotlight Dim effect for shop placement previews
-  if (currentHoveredTile && gameSession.started && settings.shopHintsEnabled) {
-    ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+  // Chess-style placement glow: dim board + glow candidate tiles.
+  if (placement.active) {
+    ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
     ctx.fillRect(0, 0, 750, 750);
-    
-    // Draw highlighters spotlights
-    const previewHead = +$("input-shop-head").value;
-    const previewTail = +$("input-shop-tail").value;
-    const activePlayer = gameSession.players[gameSession.current_turn];
 
-    if (previewHead && previewTail) {
-      // Validate placement to color preview spotlight
-      const cost = calculateSnakeCostMock(activePlayer.snakes_owned.length, previewHead - previewTail);
-      const isAffordable = activePlayer.points >= cost;
-      
-      const headCenter = tileCenter(previewHead);
-      const tailCenter = tileCenter(previewTail);
-      
-      // Head Spotlight
+    const pulse = 0.5 + 0.5 * Math.sin(Date.now() * 0.006);
+    const glowTiles = placement.head === null ? placement.validHeads : placement.validTails;
+    const glowColor = placement.head === null ? "#f5c443" : "#10b981"; // gold heads / green tails
+
+    glowTiles.forEach(tn => {
+      const c = tileCenter(tn);
+      ctx.save();                                  // cut a spotlight hole
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, size * 0.48, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      ctx.strokeStyle = glowColor;                 // pulsing glow ring
+      ctx.lineWidth = 2 + pulse * 2;
+      ctx.shadowColor = glowColor;
+      ctx.shadowBlur = 8 + pulse * 10;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, size * 0.42, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    });
+
+    if (placement.head !== null) {                 // mark the chosen head
+      const hc = tileCenter(placement.head);
       ctx.save();
       ctx.globalCompositeOperation = "destination-out";
       ctx.beginPath();
-      ctx.arc(headCenter.x, headCenter.y, size * 0.7, 0, Math.PI * 2);
-      ctx.fill();
-      
-      // Tail Spotlight
-      ctx.beginPath();
-      ctx.arc(tailCenter.x, tailCenter.y, size * 0.7, 0, Math.PI * 2);
+      ctx.arc(hc.x, hc.y, size * 0.48, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
-
-      // Spotlight rings
-      ctx.strokeStyle = isAffordable ? "#10b981" : "#ef4444";
-      ctx.lineWidth = 3;
+      ctx.strokeStyle = "#ff4a5a";
+      ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.arc(headCenter.x, headCenter.y, size * 0.6, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(tailCenter.x, tailCenter.y, size * 0.6, 0, Math.PI * 2);
+      ctx.arc(hc.x, hc.y, size * 0.44, 0, Math.PI * 2);
       ctx.stroke();
     }
   }
@@ -1412,31 +1423,42 @@ function drawBoard() {
     ctx.fillText(p.name, coord.x, coord.y - 12);
   });
 
-  // 7. Draw Placement preview highlighting cost previews
-  if (currentHoveredTile && gameSession.started && settings.shopHintsEnabled) {
-    const activePlayer = gameSession.players[gameSession.current_turn];
-    if (activePlayer.position > 0 && activePlayer.can_buy_snake && !activePlayer.is_ai) {
-      const head = +$("input-shop-head").value;
-      const tail = +$("input-shop-tail").value;
-      
-      if (head && tail && head > tail) {
-        const cost = calculateSnakeCostMock(activePlayer.snakes_owned.length, head - tail);
-        const isAffordable = activePlayer.points >= cost;
-        const valid = canPlaceSnakeMock(head, tail, activePlayer.points, cost, activePlayer.snakes_owned.length);
-        
-        // Render dashed connection line preview
-        const headCenter = tileCenter(head);
-        const tailCenter = tileCenter(tail);
-        ctx.strokeStyle = valid ? "#10b981" : "#ef4444";
-        ctx.lineWidth = 2.5;
-        ctx.setLineDash([6, 4]);
-        ctx.beginPath();
-        ctx.moveTo(headCenter.x, headCenter.y);
-        ctx.lineTo(tailCenter.x, tailCenter.y);
-        ctx.stroke();
-        ctx.setLineDash([]); // Reset
-      }
-    }
+  // 7a. Dashed preview line for a chosen/AI snake (head→tail)
+  if (previewSnake) {
+    const hc = tileCenter(previewSnake.head);
+    const tc = tileCenter(previewSnake.tail);
+    ctx.strokeStyle = NEON_COLORS[previewSnake.owner] || "#10b981";
+    ctx.lineWidth = 3;
+    ctx.setLineDash([8, 5]);
+    ctx.beginPath();
+    ctx.moveTo(hc.x, hc.y);
+    ctx.lineTo(tc.x, tc.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // 7b. Head→tail GROW animation in the owner's color (on purchase)
+  if (growAnim) {
+    const hc = tileCenter(growAnim.head);
+    const tc = tileCenter(growAnim.tail);
+    const ex = hc.x + (tc.x - hc.x) * growAnim.progress;
+    const ey = hc.y + (tc.y - hc.y) * growAnim.progress;
+    const color = NEON_COLORS[growAnim.owner] || "#e2e8f0";
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 10;
+    ctx.lineCap = "round";
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 14;
+    ctx.beginPath();
+    ctx.moveTo(hc.x, hc.y);
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // head knob
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(hc.x, hc.y, 8, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   ctx.restore();
@@ -1830,13 +1852,14 @@ function trigger3DDiceRoll(rollValue) {
     const durSec = settings.durDice / 10;
     
     setTimeout(() => {
-      // Remove tumble class and lock face angle
-      diceCube.className = `dice-cube show-${rollValue}`;
-      
-      // Screen shake bump pulse on landing
+      // Lock to the front face and stamp the actual rolled value on it, so
+      // the number shown ALWAYS matches the real roll (CSS face mapping is
+      // unreliable across browsers).
+      const front = diceCube.querySelector(".face.front");
+      if (front) front.textContent = rollValue;
+      diceCube.className = "dice-cube show-1";
+
       triggerScreenShake(8, 250);
-      
-      // Slight delay for player to absorb result number
       setTimeout(resolve, 500);
     }, durSec * 1000);
   });
@@ -1866,16 +1889,16 @@ function renderGameScreen() {
   }
 
   // Shop configuration panel visibility
-  const canShop = !activePlayer.is_ai && activePlayer.position > 0 && activePlayer.snake_count < 3;
+  const canShop = !activePlayer.is_ai && activePlayer.position > 0
+                  && activePlayer.snake_count < 3;
   if (canShop) {
     $("shop-panel").classList.remove("hidden");
-    
-    // Autofill limits safely
-    $("input-shop-head").value = 50;
-    $("input-shop-tail").value = 10;
-    updateShopCostPreview();
+    $("btn-shop-place").textContent = placement.active
+      ? "✖️ Cancel placement" : "🎯 Place a Snake";
+    if (!placement.active) setShopInstruction("");
   } else {
     $("shop-panel").classList.add("hidden");
+    if (placement.active) cancelPlacement();
   }
 
   // Roll Button availability
@@ -1959,422 +1982,265 @@ function executeEmote(playerId, type) {
 // ── CUSTOM STATE CLIENT ENGINE TURN LOGIC (STALL-FREE TRACED LOOP) ──
 
 $("btn-action-roll").addEventListener("click", async () => {
-  // Humans roll the dice
+  // Humans roll the dice (engine resolves the turn server-side)
   const activePlayer = gameSession.players[gameSession.current_turn];
   if (activePlayer.is_ai || isAnimating) return;
-
-  stopTurnTimer();
-  await executeCoreTurn(null);
+  await executeTurn();
 });
 
-// Shop Cost Preview Calculations
-$("input-shop-head").addEventListener("input", updateShopCostPreview);
-$("input-shop-tail").addEventListener("input", updateShopCostPreview);
+// ── CHESS-STYLE SNAKE PLACEMENT ───────────────────────────────────────────────
+// Buy flow: click a glowing HEAD tile → click a glowing affordable TAIL tile →
+// confirm dialog (cost + projected points) → head→tail grow animation in the
+// player's color.
 
-async function updateShopCostPreview() {
-  const head = +$("input-shop-head").value;
-  const tail = +$("input-shop-tail").value;
-  const activePlayer = gameSession.players[gameSession.current_turn];
-  
-  const label = $("shop-preview-cost");
-  if (head <= tail || head < 20 || head > 90 || tail < 1) {
-    label.textContent = "-- pts";
-    label.style.color = "inherit";
-    return;
-  }
+function activePlayerObj() { return gameSession.players[gameSession.current_turn]; }
+function setShopInstruction(msg) { const el = $("shop-instruction"); if (el) el.textContent = msg; }
 
-  const cost = calculateSnakeCostMock(activePlayer.snakes_owned.length, head - tail);
-  label.textContent = `${cost} pts`;
-  
-  if (activePlayer.points >= cost) {
-    label.style.color = "#10b981";
-  } else {
-    label.style.color = "#ef4444";
-  }
-}
+// Valid placements come from the engine (/api/shop-options) — no client rules.
+let shopOpts = { tailsByHead: new Map(), costByHeadTail: new Map() };
 
-// Buy Snake click handler
-$("btn-shop-buy").addEventListener("click", async () => {
-  const head = +$("input-shop-head").value;
-  const tail = +$("input-shop-tail").value;
-  const activePlayer = gameSession.players[gameSession.current_turn];
+async function enterPlacement() {
+  const p = activePlayerObj();
+  if (p.is_ai || isAnimating || p.position < 1 || !p.can_buy_snake) return;
 
-  if (activePlayer.is_ai || isAnimating) return;
+  let data;
+  try { data = await api("/api/shop-options"); }
+  catch (e) { setShopInstruction(`⚠ ${e.message}`); return; }
 
-  const cost = calculateSnakeCostMock(activePlayer.snakes_owned.length, head - tail);
-  const valid = canPlaceSnakeMock(head, tail, activePlayer.points, cost, activePlayer.snakes_owned.length);
+  shopOpts.tailsByHead = new Map();
+  shopOpts.costByHeadTail = new Map();
+  placement.validHeads = new Set(data.heads || []);
+  (data.heads || []).forEach(h => {
+    const tails = new Set();
+    (data.tails[h] || []).forEach(([t, cost]) => {
+      tails.add(t);
+      shopOpts.costByHeadTail.set(`${h}:${t}`, cost);
+    });
+    shopOpts.tailsByHead.set(h, tails);
+  });
 
-  if (!valid.ok) {
-    $("shop-feedback").textContent = `❌ ${valid.reason}`;
-    playSFX("click");
-    // Shake buy panel button to register frustration juice
-    const buyBtn = $("btn-shop-buy");
-    buyBtn.classList.add("btn-shake-error");
-    setTimeout(() => buyBtn.classList.remove("btn-shake-error"), 500);
-    return;
-  }
-
+  placement.head = null;
+  placement.validTails = new Set();
+  previewSnake = null;
   $("shop-feedback").textContent = "";
-  
-  // Deduct locally immediately
-  activePlayer.points -= cost;
-  const newSnake = [head, tail, activePlayer.id];
-  gameSession.snakes.push(newSnake);
-  activePlayer.snakes_owned.push(newSnake);
-  
-  gameSession.stats[activePlayer.id].snakesPlaced++;
+  if (placement.validHeads.size === 0) {
+    setShopInstruction("⚠️ No affordable placements right now — roll and earn more.");
+    return;
+  }
+  placement.active = true;
+  setShopInstruction("Click a glowing HEAD tile (where the snake bites).");
+  $("btn-shop-place").textContent = "✖️ Cancel placement";
+  playSFX("click");
+}
 
-  // Animate placing
+function cancelPlacement() {
+  placement.active = false;
+  placement.head = null;
+  placement.validHeads = new Set();
+  placement.validTails = new Set();
+  previewSnake = null;
+  setShopInstruction("");
+  const b = $("btn-shop-place");
+  if (b) b.textContent = "🎯 Place a Snake";
+}
+
+function handleBoardClick(tile) {
+  const p = activePlayerObj();
+  if (!placement.active || p.is_ai || isAnimating) return;
+
+  if (placement.head === null) {
+    if (!placement.validHeads.has(tile)) { playSFX("click"); setShopInstruction("Pick a glowing HEAD tile."); return; }
+    placement.head = tile;
+    placement.validTails = shopOpts.tailsByHead.get(tile) || new Set();
+    previewSnake = null;
+    setShopInstruction(`Head ${tile} chosen. Click a glowing TAIL tile (victims slide here).`);
+    playSFX("hop", p.id);
+  } else {
+    if (tile === placement.head) {     // click head again = reset head
+      placement.head = null; placement.validTails = new Set(); previewSnake = null;
+      setShopInstruction("Click a glowing HEAD tile.");
+      return;
+    }
+    if (!placement.validTails.has(tile)) { playSFX("click"); setShopInstruction("Pick a glowing TAIL tile."); return; }
+    previewSnake = { head: placement.head, tail: tile, owner: p.id };
+    openSnakeConfirm(placement.head, tile);
+  }
+}
+
+function openSnakeConfirm(head, tail) {
+  const p = activePlayerObj();
+  const cost = shopOpts.costByHeadTail.get(`${head}:${tail}`) || 0;
+  $("confirm-snake-route").textContent = `${head} ➔ ${tail}`;
+  $("confirm-snake-len").textContent = head - tail;
+  $("confirm-snake-cost").textContent = `${cost} pts`;
+  $("confirm-snake-now").textContent = `${p.points} pts`;
+  $("confirm-snake-after").textContent = `${p.points - cost} pts`;
+  $("modal-snake-confirm").classList.remove("hidden");
+}
+
+function animateSnakeGrow(head, tail, owner) {
+  return new Promise(resolve => {
+    const dur = 500 / getSpeedMultiplier();
+    const start = performance.now();
+    growAnim = { head, tail, owner, progress: 0 };
+    const step = (now) => {
+      const prog = Math.min(1, (now - start) / dur);
+      growAnim.progress = prog;
+      if (prog < 1) requestAnimationFrame(step);
+      else { growAnim = null; resolve(); }
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+// Commit the purchase through the engine, then animate + apply state.
+async function commitSnakePurchase() {
+  const p = activePlayerObj();
+  const head = placement.head;
+  const tail = previewSnake ? previewSnake.tail : null;
+  if (head == null || tail == null) return;
+
+  $("modal-snake-confirm").classList.add("hidden");
+  let res;
+  try { res = await api("/api/buy", { head, tail }); }
+  catch (e) { $("shop-feedback").textContent = `⚠ ${e.message}`; return; }
+  if (!res.ok) { $("shop-feedback").textContent = `❌ ${res.message}`; cancelPlacement(); return; }
+
   playSFX("shop_buy");
-  appendLog(`🛒 [Shop] ${activePlayer.name} placed snake ${head}➔${tail} for ${cost} pts.`);
-  
+  appendLog(`🛒 [Shop] ${p.name} placed snake ${head}➔${tail}.`);
+  if (gameSession.stats[p.id]) gameSession.stats[p.id].snakesPlaced++;
+
+  cancelPlacement();
+  await animateSnakeGrow(head, tail, p.id);   // head→tail grow in owner color
+  applyServerState(res.state);                // engine is the source of truth
   renderGameScreen();
+  $("shop-panel").classList.add("hidden");    // proceed to roll
+}
 
-  // Hide shop to proceed with rolling
-  $("shop-panel").classList.add("hidden");
+// Wiring
+$("btn-shop-place").addEventListener("click", () => {
+  placement.active ? cancelPlacement() : enterPlacement();
 });
-
-// Mock rule checks in client for quick placements checks
-function calculateSnakeCostMock(currentSnakeCount, length) {
-  const count = currentSnakeCount + 1;
-  const cost = Math.floor(2 * count * Math.pow(length, 0.9));
-  return Math.max(cost, 12);
-}
-
-function canPlaceSnakeMock(head, tail, walletPoints, cost, ownedCount) {
-  if (head <= tail) return { ok: false, reason: "Head must be higher than tail." };
-  if (head > 90) return { ok: false, reason: "Snake head cannot be placed above tile 90." };
-  if (ownedCount >= 3) return { ok: false, reason: "You already own the maximum of 3 snakes." };
-  if (walletPoints < cost) return { ok: false, reason: `Not enough points. Need ${cost}, have ${walletPoints}` };
-
-  // Occupied/ladder check
-  const playerTiles = new Set(gameSession.players.map(p => p.position).filter(pos => pos > 0));
-  if (playerTiles.has(head) || playerTiles.has(tail)) return { ok: false, reason: "Cannot place on occupied tiles." };
-
-  const ladderBottoms = new Set(gameSession.ladders.map(l => l[0]));
-  const ladderTops = new Set(gameSession.ladders.map(l => l[1]));
-  if (ladderBottoms.has(head) || ladderTops.has(head) || ladderBottoms.has(tail) || ladderTops.has(tail)) {
-    return { ok: false, reason: "Cannot place snake on a ladder tile." };
-  }
-
-  // Chaining check
-  const snakeHeads = new Set(gameSession.snakes.map(s => s[0]));
-  const snakeTails = new Set(gameSession.snakes.map(s => s[1]));
-  if (snakeTails.has(head)) return { ok: false, reason: "Cannot place head at another snake's tail." };
-  if (snakeHeads.has(tail)) return { ok: false, reason: "Cannot place tail at another snake's head." };
-
-  // Anti-wall check
-  const prospectiveHeads = new Set([...snakeHeads, head]);
-  if (checkHeadRunMock(prospectiveHeads, head) > 2) {
-    return { ok: false, reason: "Would create too long a wall of snake heads." };
-  }
-
-  return { ok: true };
-}
-
-function checkHeadRunMock(headsSet, newHead) {
-  let left = newHead - 1;
-  while (headsSet.has(left)) left--;
-  let right = newHead + 1;
-  while (headsSet.has(right)) right++;
-  return right - left - 1;
-}
+$("btn-snake-confirm").addEventListener("click", commitSnakePurchase);
+$("btn-snake-back").addEventListener("click", () => {
+  $("modal-snake-confirm").classList.add("hidden");
+  previewSnake = null;
+  setShopInstruction("Click a glowing TAIL tile.");
+});
+$("btn-snake-cancel").addEventListener("click", () => {
+  $("modal-snake-confirm").classList.add("hidden");
+  previewSnake = null;
+});
 
 // ── THE CRITICAL STALL-FREE CORE TURN EXECUTOR ──
-async function executeCoreTurn(aiShopDecision) {
-  const activePlayer = gameSession.players[gameSession.current_turn];
-  gameSession.stats[activePlayer.id].turnsTaken++;
+// ── SERVER-DRIVEN TURN — the Python engine (game/) is the source of truth.
+// The client only renders state and animates the move the server reports.
 
-  // 1. Check if AI bought a snake
-  if (aiShopDecision && activePlayer.is_ai) {
-    const head = aiShopDecision.head;
-    const tail = aiShopDecision.tail;
-    const cost = calculateSnakeCostMock(activePlayer.snakes_owned.length, head - tail);
+// Merge an authoritative server state into gameSession (keep client-only
+// fields like stats / animatingCoords).
+function applyServerState(s) {
+  if (!s || !s.started) return;
+  gameSession.tiles = s.tiles;
+  gameSession.ladders = s.ladders;
+  gameSession.snakes = s.snakes;
+  gameSession.bombs = s.bombs;
+  gameSession.current_turn = s.current_turn;
+  gameSession.turn_number = s.turn_number;
+  gameSession.winner = s.winner;
+  s.players.forEach(sp => {
+    const cp = gameSession.players.find(p => p.id === sp.id);
+    if (!cp) return;
+    cp.position = sp.position;
+    cp.points = sp.points;
+    cp.snake_count = sp.snake_count;
+    cp.can_buy_snake = sp.can_buy_snake;
+    cp.bankrupt_count = sp.bankrupt_count;
+  });
+}
 
-    // Spotlight animations before placing snake
-    currentHoveredTile = head;
-    $("input-shop-head").value = head;
-    $("input-shop-tail").value = tail;
+function queueAndWait(anim) {
+  return new Promise(res => { queueAnimation(anim); checkAnimationCompletion(res); });
+}
+
+// Animate a reported move: walk dice (from→landing), then resolve the
+// landing (ladder climb / snake slide), bomb blast, or bankruptcy spin.
+// `opts` = {bomb, bankrupt} detected from the server's turn logs.
+async function animateTokenMove(moverId, from, landing, final, opts = {}) {
+  const mover = gameSession.players[moverId];
+
+  if (landing > from) {
+    const path = [];
+    for (let s = from + 1; s <= landing; s++) path.push(s);
+    await queueAndWait({ type: "hop_path", playerId: moverId, path, startTile: from });
+    mover.position = landing;
     renderGameScreen();
-
-    // Small delay to visually highlight AI shop placement
-    await new Promise(r => setTimeout(r, 800));
-
-    // Place it
-    activePlayer.points -= cost;
-    const newSnake = [head, tail, activePlayer.id];
-    gameSession.snakes.push(newSnake);
-    activePlayer.snakes_owned.push(newSnake);
-    
-    gameSession.stats[activePlayer.id].snakesPlaced++;
-    playSFX("shop_buy");
-    appendLog(`🛒 [Shop] ${activePlayer.name} (AI) bought snake ${head}➔${tail} for ${cost} pts.`);
-
-    currentHoveredTile = null;
-    renderGameScreen();
-    await new Promise(r => setTimeout(r, 400));
   }
 
-  // 2. Roll Dice & Spin
-  const roll = Math.floor(Math.random() * 6) + 1;
-  
-  // Record History for watch replay
-  gameSession.actionHistory.push({
-    type: "turn_start",
-    player: { ...activePlayer },
-    shop: aiShopDecision ? { ...aiShopDecision } : null,
-    roll: roll,
-    boardState: JSON.parse(JSON.stringify({
-      snakes: gameSession.snakes,
-      players: gameSession.players
-    }))
-  });
-
-  // Roll animations
-  await trigger3DDiceRoll(roll);
-
-  // 3. Move Player logic
-  const oldPos = activePlayer.position;
-  const rawPos = oldPos + roll;
-
-  if (rawPos > 100) {
-    // Overshoot exact rule stay put
-    appendLog(`🚫 [Skip] ${activePlayer.name} rolled ${roll} and overshot tile 100! (Exact roll needed)`);
-    triggerFloatingNumber(oldPos, "SKIPPED", false);
-    
-    // Advance turns
-    advanceTurnLoop();
+  if (opts.bankrupt) {
+    // Bankruptcy only comes from a bomb now: blast, then spin back to tile 0.
+    triggerFloatingNumber(landing, "💥 BOMB!", false);
+    await queueAndWait({ type: "bomb_explode", playerId: moverId, tile: landing });
+    triggerFloatingNumber(landing, "☠️ BANKRUPT!", false);
+    await queueAndWait({ type: "bankrupt_spin", playerId: moverId, startTile: landing });
+    mover.position = 0;
+    renderGameScreen();
     return;
   }
 
-  // Hop animations step by step
-  const hopPath = [];
-  for (let step = oldPos + 1; step <= rawPos; step++) {
-    hopPath.push(step);
+  if (final !== landing) {                     // ladder up / snake down
+    const type = final > landing ? "climb" : "slide";
+    await queueAndWait({ type, playerId: moverId, startTile: landing, endTile: Math.max(0, final) });
+    mover.position = final;
+    renderGameScreen();
   }
-  
-  appendLog(`🎲 [Roll] ${activePlayer.name} rolled ${roll} and moves from ${oldPos}➔${rawPos}.`);
-  
-  // Push hop animation to queue and wait
-  await new Promise((resolve) => {
-    queueAnimation({
-      type: "hop_path",
-      playerId: activePlayer.id,
-      path: hopPath,
-      startTile: oldPos
-    });
-    // Wait for queue execution
-    checkAnimationCompletion(resolve);
-  });
 
-  activePlayer.position = rawPos;
-  renderGameScreen();
+  if (opts.bomb) {                             // bomb that stung but didn't bankrupt
+    triggerFloatingNumber(final, "💥 BOMB!", false);
+    await queueAndWait({ type: "bomb_explode", playerId: moverId, tile: final });
+  }
+}
 
-  // Apply sequential Triggers: Ladders, Snakes, Bombs
-  await executeLandingsCascade(activePlayer);
+// Take one turn via the engine. Works for both human and AI (the server
+// decides the AI's shop move and rolls; a human's snakes are pre-bought).
+async function executeTurn() {
+  if (isAnimating || gameSession.winner) return;
+  const moverId = gameSession.current_turn;
+  stopTurnTimer();
 
-  // 4. Earn Tile Income
-  const baseValue = 3;
-  const tilePoints = activePlayer.position === 100 ? 40 : ((baseValue + 1) + Math.floor(activePlayer.position / 15) + Math.floor(Math.random() * 5));
-  activePlayer.points += tilePoints;
-  gameSession.stats[activePlayer.id].pointsEarned += tilePoints;
-  
-  triggerFloatingNumber(activePlayer.position, `+${tilePoints} pts`, true);
-  appendLog(`💰 [Income] ${activePlayer.name} earned ${tilePoints} points on tile ${activePlayer.position}.`);
-  renderGameScreen();
-  await new Promise(r => setTimeout(r, 450));
+  let res;
+  try {
+    res = await api("/api/turn", {});
+  } catch (e) {
+    appendLog(`⚠ Turn failed: ${e.message}`);
+    return;
+  }
 
-  // 5. Landed on Bombs Check
-  const bombsSet = new Set(gameSession.bombs);
-  if (bombsSet.has(activePlayer.position)) {
-    const bombLoss = 18 + Math.floor(activePlayer.position / 6);
-    appendLog(`💣 [Bomb] ${activePlayer.name} triggered a bomb on tile ${activePlayer.position}! Wiping ${bombLoss} pts.`);
-    gameSession.stats[activePlayer.id].bombsHit++;
+  const logs = res.logs || [];
+  const bankrupt = logs.some(l => /BANKRUPT/i.test(l));
+  const bomb = logs.some(l => l.includes("💣") || /Bomb/i.test(l));
 
-    await new Promise((resolve) => {
-      queueAnimation({
-        type: "bomb_explode",
-        playerId: activePlayer.id,
-        tile: activePlayer.position
-      });
-      checkAnimationCompletion(resolve);
-    });
-
-    const isSolvent = deductPoints(activePlayer, bombLoss);
-    if (!isSolvent) {
-      // Bankruptcy resets
-      await executeBankruptcySequence(activePlayer);
+  const move = res.move;
+  if (move) {
+    await trigger3DDiceRoll(move.roll);
+    if (move.landing === move.from && move.final === move.from) {
+      appendLog(`🚫 ${move.name} rolled ${move.roll} — overshoot, stays put.`);
+      triggerFloatingNumber(move.from, "SKIPPED", false);
+    } else {
+      await animateTokenMove(moverId, move.from, move.landing, move.final, { bomb, bankrupt });
     }
-    renderGameScreen();
-    await new Promise(r => setTimeout(r, 450));
   }
 
-  // 6. Win check
-  if (activePlayer.position >= 100) {
-    handleVictory(activePlayer);
+  (res.logs || []).forEach(line => appendLog(line));
+  applyServerState(res.state);
+  renderGameScreen();
+
+  if (res.winner) {
+    const wp = gameSession.players.find(p => p.name === res.winner)
+               || gameSession.players[moverId];
+    handleVictory(wp);
     return;
   }
-
-  // 7. Advance turn cycle
   advanceTurnLoop();
-}
-
-// Deduction point helper that triggers bankruptcy resets
-function deductPoints(player, amount) {
-  player.points -= amount;
-  if (player.points < 0) {
-    player.points = 0;
-    return false;
-  }
-  return true;
-}
-
-// Executes consecutive Ladder climbs or Snake slides until stable
-async function executeLandingsCascade(player) {
-  let cascadeLimit = 0;
-  
-  while (cascadeLimit < 15) {
-    cascadeLimit++;
-    const currentTile = player.position;
-
-    // Check ladders first
-    const ladder = gameSession.ladders.find(l => l[0] === currentTile);
-    if (ladder) {
-      appendLog(`🪜 [Ladder] ${player.name} climbed ladder ${ladder[0]}➔${ladder[1]}!`);
-      gameSession.stats[player.id].laddersClimbed++;
-
-      await new Promise((resolve) => {
-        queueAnimation({
-          type: "climb",
-          playerId: player.id,
-          startTile: ladder[0],
-          endTile: ladder[1]
-        });
-        checkAnimationCompletion(resolve);
-      });
-      player.position = ladder[1];
-      renderGameScreen();
-      continue;
-    }
-
-    // Check snakes triggers
-    const strikingSnake = getStrikingSnake(currentTile, player.id);
-    if (strikingSnake) {
-      const head = strikingSnake[0];
-      const tail = strikingSnake[1];
-      const ownerId = strikingSnake[2];
-      
-      appendLog(`🐍 [Bite] ${player.name} stepped into snake trap at head ${head} and slides➔${tail}!`);
-      gameSession.stats[player.id].bittenCount++;
-
-      await new Promise((resolve) => {
-        queueAnimation({
-          type: "slide",
-          playerId: player.id,
-          startTile: currentTile,
-          endTile: tail
-        });
-        checkAnimationCompletion(resolve);
-      });
-
-      player.position = tail;
-      renderGameScreen();
-
-      // Steal point from victim to owner
-      if (ownerId >= 0) {
-        const flatSteal = 15;
-        const pctSteal = Math.floor(player.points * 0.3);
-        const stealAmount = Math.min(player.points, flatSteal + pctSteal);
-
-        if (stealAmount > 0) {
-          const owner = gameSession.players.find(p => p.id === ownerId);
-          
-          // Deduct from victim
-          const solvent = deductPoints(player, stealAmount);
-          
-          // Add to owner
-          owner.points += stealAmount;
-          gameSession.stats[ownerId].pointsStolen += stealAmount;
-
-          appendLog(`💸 [Theft] Snake trap robs ${stealAmount} pts from ${player.name}➔${owner.name}!`);
-
-          // Coin animations
-          await new Promise((resolve) => {
-            queueAnimation({
-              type: "point_steal_particles",
-              playerId: owner.id,
-              victimTile: tail,
-              ownerTile: owner.position
-            });
-            checkAnimationCompletion(resolve);
-          });
-
-          triggerFloatingNumber(tail, `-${stealAmount}`, false);
-          triggerFloatingNumber(owner.position, `+${stealAmount}`, true);
-          
-          if (!solvent) {
-            await executeBankruptcySequence(player);
-          }
-        }
-      }
-
-      // Consume Player placed snakes (single-use)
-      if (ownerId >= 0) {
-        gameSession.snakes = gameSession.snakes.filter(s => !(s[0] === head && s[1] === tail && s[2] === ownerId));
-        const owner = gameSession.players.find(p => p.id === ownerId);
-        owner.snakes_owned = owner.snakes_owned.filter(s => !(s[0] === head && s[1] === tail && s[2] === ownerId));
-        appendLog(`💥 [Trap] Trap at head ${head} is consumed and removed.`);
-      }
-
-      renderGameScreen();
-      continue;
-    }
-
-    // Stable, nothing triggered
-    break;
-  }
-}
-
-// Owner immune strike range finder
-function getStrikingSnake(tile, playerId) {
-  let best = null;
-  gameSession.snakes.forEach(s => {
-    const head = s[0];
-    const tail = s[1];
-    const ownerId = s[2];
-    
-    if (ownerId === playerId) return; // Immune
-
-    const range = ownerId >= 0 ? 4 : 0; // strike range head+4 below, board=exact head
-    if (head - range <= tile && tile <= head) {
-      if (best === null || head > best[0]) {
-        best = s;
-      }
-    }
-  });
-  return best;
-}
-
-// Executes Bankruptcy Sequence resets to start
-async function executeBankruptcySequence(player) {
-  appendLog(`☠️ [BANKRUPT] ${player.name} is bankrupted! Reset to start.`);
-  gameSession.stats[player.id].bankruptCount++;
-  player.bankrupt_count++;
-
-  const oldPos = player.position;
-
-  await new Promise((resolve) => {
-    queueAnimation({
-      type: "bankrupt_spin",
-      playerId: player.id,
-      startTile: oldPos
-    });
-    checkAnimationCompletion(resolve);
-  });
-
-  player.position = 0;
-  player.points = 0;
-  renderGameScreen();
 }
 
 function checkAnimationCompletion(callback) {
@@ -2389,19 +2255,12 @@ function checkAnimationCompletion(callback) {
 }
 
 
-// ── TURN SYSTEM ADVANCEMENT LOOP ──
+// ── TURN ADVANCEMENT ──
+// The server already advanced current_turn (applied via applyServerState);
+// we just render and, if it's an AI's turn, drive it.
 function advanceTurnLoop() {
   if (gameSession.winner) return;
-
-  // Advance player turn index
-  gameSession.current_turn = (gameSession.current_turn + 1) % gameSession.players.length;
-  if (gameSession.current_turn === 0) {
-    gameSession.turn_number++;
-  }
-
   renderGameScreen();
-
-  // If next is AI, trigger check
   checkAndExecuteAITurn();
 }
 
@@ -2410,73 +2269,27 @@ async function checkAndExecuteAITurn() {
 
   const activePlayer = gameSession.players[gameSession.current_turn];
   if (!activePlayer.is_ai) {
-    // Human turn: start countdown turn timer
-    startTurnTimer();
+    startTurnTimer();   // human turn
     return;
   }
 
-  // AI Turn Loop
+  // AI turn: show "thinking", then take the turn via the engine.
   stopTurnTimer();
-  
-  // 1. Show "AI is thinking..." ticking panel
   $("thinking-indicator").classList.remove("hidden");
   $("btn-action-roll").disabled = true;
-
-  // Play light ticking clock SFX
   const tickInterval = setInterval(() => {
-    if (!$("thinking-indicator").classList.contains("hidden")) {
-      playSFX("thinking");
-    } else {
-      clearInterval(tickInterval);
-    }
+    if (!$("thinking-indicator").classList.contains("hidden")) playSFX("thinking");
+    else clearInterval(tickInterval);
   }, 400);
 
-  // Artificial thinking delay (1.5s) to feel organic
-  await new Promise(r => setTimeout(r, 1200));
+  await new Promise(r => setTimeout(r, 1000));
+  clearInterval(tickInterval);
+  $("thinking-indicator").classList.add("hidden");
 
-  // Build JSON BoardState to send to stateless Flask API
-  const boardPayload = {
-    tiles: gameSession.tiles,
-    ladders: gameSession.ladders,
-    snakes: gameSession.snakes,
-    bombs: gameSession.bombs,
-    players: gameSession.players.map(p => ({
-      id: p.id,
-      name: p.name,
-      position: p.position,
-      points: p.points,
-      is_ai: p.is_ai,
-      difficulty: p.difficulty,
-      bankrupt_count: p.bankrupt_count
-    })),
-    current_turn: gameSession.current_turn,
-    turn_number: gameSession.turn_number
-  };
+  await executeTurn();   // server decides the AI's shop move + roll
 
-  try {
-    const aiMoveDecision = await api("/api/ai-move", {
-      board: boardPayload,
-      activePlayerId: activePlayer.id
-    });
-
-    // Hide indicator spinner
-    clearInterval(tickInterval);
-    $("thinking-indicator").classList.add("hidden");
-
-    // Execute core turn with AI decision
-    await executeCoreTurn(aiMoveDecision);
-
-    // AI occasionally emotes automatically to feel ALIVE!
-    if (settings.aiEmotesEnabled && Math.random() < 0.28) {
-      triggerAutomaticAIEmote(activePlayer.id);
-    }
-
-  } catch (e) {
-    console.error("AI Turn API execution error:", e);
-    // Graceful fallback to avoid lockups: just execute simple roll
-    clearInterval(tickInterval);
-    $("thinking-indicator").classList.add("hidden");
-    await executeCoreTurn(null);
+  if (settings.aiEmotesEnabled && Math.random() < 0.28) {
+    triggerAutomaticAIEmote(activePlayer.id);
   }
 }
 
@@ -2663,148 +2476,13 @@ $("btn-victory-replay").addEventListener("click", () => {
   executeGameReplay();
 });
 
+// Replay was a client-side re-simulation; with the engine as the single
+// source of truth the client no longer records a replayable action log.
+// Stubbed out (kept as a friendly notice) to avoid duplicating game logic.
 async function executeGameReplay() {
-  appendLog("\n📺 [Replay] STARTING MATCH WATCH REPLAY AT 2x SPEED...");
-  
-  // Temporarily force Turbo speed
-  const originalSpeed = settings.speed;
-  settings.speed = "fast";
-  
-  // Reset players coordinates
-  gameSession.players.forEach(p => {
-    p.position = 0;
-    p.points = 0;
-    p.snakes_owned = [];
-  });
-  gameSession.snakes = [];
-  
-  isAnimating = false;
-  animationQueue = [];
-
-  for (let idx = 0; idx < gameSession.actionHistory.length; idx++) {
-    const act = gameSession.actionHistory[idx];
-    const player = gameSession.players.find(p => p.id === act.player.id);
-    
-    appendLog(`🎬 [Replay Turn ${idx+1}] ${player.name} plays:`);
-    
-    // Re-apply snake buys
-    if (act.shop) {
-      const head = act.shop.head;
-      const tail = act.shop.tail;
-      const cost = calculateSnakeCostMock(player.snakes_owned.length, head - tail);
-      player.points -= cost;
-      
-      const newSnake = [head, tail, player.id];
-      gameSession.snakes.push(newSnake);
-      player.snakes_owned.push(newSnake);
-      
-      playSFX("shop_buy");
-      renderGameScreen();
-      await new Promise(r => setTimeout(r, 200));
-    }
-
-    // 3D dice rolls
-    await trigger3DDiceRoll(act.roll);
-
-    // Reconstruct moves path
-    const oldPos = player.position;
-    const rawPos = oldPos + act.roll;
-
-    if (rawPos <= 100) {
-      const path = [];
-      for (let s = oldPos + 1; s <= rawPos; s++) path.push(s);
-      
-      await new Promise((resolve) => {
-        queueAnimation({
-          type: "hop_path",
-          playerId: player.id,
-          path: path,
-          startTile: oldPos
-        });
-        checkAnimationCompletion(resolve);
-      });
-      player.position = rawPos;
-
-      // Triggers climb slide checks
-      await executeLandingsReplayCascade(player, act.boardState);
-    }
-    
-    renderGameScreen();
-    await new Promise(r => setTimeout(r, 300));
-  }
-
-  // Restore Speed
-  settings.speed = originalSpeed;
-  appendLog("📺 [Replay] MATCH WATCH REPLAY COMPLETED!");
-  
-  // Re-open victory modal
+  appendLog("📺 Match replay isn't available in this version.");
   const winner = gameSession.players.find(p => p.name === gameSession.winner);
-  handleVictory(winner);
-}
-
-// Ladder and snake checks during replays mapping state snapshots
-async function executeLandingsReplayCascade(player, stateSnapshot) {
-  let cascadeLimit = 0;
-  while (cascadeLimit < 15) {
-    cascadeLimit++;
-    const currentTile = player.position;
-
-    // Check ladders
-    const ladder = gameSession.ladders.find(l => l[0] === currentTile);
-    if (ladder) {
-      await new Promise((resolve) => {
-        queueAnimation({
-          type: "climb",
-          playerId: player.id,
-          startTile: ladder[0],
-          endTile: ladder[1]
-        });
-        checkAnimationCompletion(resolve);
-      });
-      player.position = ladder[1];
-      continue;
-    }
-
-    // Check snakes using snapshot
-    const strikingSnake = getStrikingSnake(currentTile, player.id);
-    if (strikingSnake) {
-      const head = strikingSnake[0];
-      const tail = strikingSnake[1];
-      const ownerId = strikingSnake[2];
-      
-      await new Promise((resolve) => {
-        queueAnimation({
-          type: "slide",
-          playerId: player.id,
-          startTile: currentTile,
-          endTile: tail
-        });
-        checkAnimationCompletion(resolve);
-      });
-
-      player.position = tail;
-
-      if (ownerId >= 0) {
-        const owner = gameSession.players.find(p => p.id === ownerId);
-        await new Promise((resolve) => {
-          queueAnimation({
-            type: "point_steal_particles",
-            playerId: owner.id,
-            victimTile: tail,
-            ownerTile: owner.position
-          });
-          checkAnimationCompletion(resolve);
-        });
-      }
-      
-      // Consume
-      if (ownerId >= 0) {
-        gameSession.snakes = gameSession.snakes.filter(s => !(s[0] === head && s[1] === tail && s[2] === ownerId));
-      }
-      continue;
-    }
-    break;
-  }
+  if (winner) handleVictory(winner);
 }
 
 
@@ -2853,28 +2531,25 @@ window.addEventListener("DOMContentLoaded", () => {
   spawnMenuParticles();
   showScreen("menu");
   
-  // Add dynamic coordinate tracking listeners on window hover for spotlights
-  const boardWrap = $("boardWrap");
-  if (boardWrap) {
-    boardWrap.addEventListener("mousemove", (e) => {
-      // Find matching hovered tile index based on grid mouse position offsets
-      const rect = canvas.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-      
-      const sizeX = rect.width / 10;
-      const sizeY = rect.height / 10;
-      
-      const col = Math.floor(mouseX / sizeX);
-      const row = 9 - Math.floor(mouseY / sizeY);
-      
-      if (col >= 0 && col < 10 && row >= 0 && row < 10) {
-        currentHoveredTile = (row % 2 === 0) ? (row * 10 + col + 1) : (row * 10 + (10 - col));
-      }
-    });
+  // Map a mouse event on the canvas to a tile number (1-100), or null.
+  const eventToTile = (e) => {
+    const cv = $("game-canvas");
+    if (!cv) return null;
+    const rect = cv.getBoundingClientRect();
+    const col = Math.floor(((e.clientX - rect.left) / rect.width) * 10);
+    const row = 9 - Math.floor(((e.clientY - rect.top) / rect.height) * 10);
+    if (col < 0 || col > 9 || row < 0 || row > 9) return null;
+    return (row % 2 === 0) ? (row * 10 + col + 1) : (row * 10 + (10 - col));
+  };
 
-    boardWrap.addEventListener("mouseleave", () => {
-      currentHoveredTile = null;
+  // Listeners go on the canvas itself (the old #boardWrap id never existed).
+  const cv = $("game-canvas");
+  if (cv) {
+    cv.addEventListener("mousemove", (e) => { currentHoveredTile = eventToTile(e); });
+    cv.addEventListener("mouseleave", () => { currentHoveredTile = null; });
+    cv.addEventListener("click", (e) => {
+      const tile = eventToTile(e);
+      if (tile) handleBoardClick(tile);
     });
   }
 });

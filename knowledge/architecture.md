@@ -78,22 +78,34 @@ Key functions:
   `n_hard` Hard AIs + rest Easy (**mixed**), **shuffled**, ids 0..N-1 →
   `load_ppo_if_needed` (graceful fallback) → board → run.
 - `--hard-ais N` sets how many AIs are Hard; `--difficulty` is the all/none shortcut.
-- `--web` → `ui.web.server.run_server` (threaded); else Pygame; `--console` → terminal.
+- `--web` → `server.run_server_flask` (http://localhost:5000); else Pygame; `--console` → terminal.
 - Forces UTF-8 stdout (Windows emoji/arrow logs).
 
-## Web UI (`ui/web/`) — PRIMARY
+## Web UI (`server.py` + `web/`) — PRIMARY, engine-driven
 
-- `server.py` — stdlib **`ThreadingHTTPServer`** (single-thread deadlocks browser
-  keep-alive connections). In-memory `Session`. Endpoints: `GET /`, `/app.js`,
-  `/style.css`; `GET /api/state`; `POST /api/new` (players/humans/**hard_ais**),
-  `/api/buy`, `/api/turn` (advance; AI auto-decides; returns `move` for animation),
-  `/api/cost`, `/api/quit` (reset session). All POSTs wrapped in try/except →
-  500 + traceback (no silent hangs).
-- `index.html` — **title page → setup → loading overlay → board**.
-- `app.js` — screen flow, staged loading bar, board grid (boustrophedon), tokens,
-  **per-step token animation** (walk dice then ladder/snake jump), shop, log;
-  **resumes** an in-progress game on refresh; New game calls `/api/quit`.
-- `style.css` — minimal placeholder (teammate redesigns), incl. overlay + bar.
+The **Python engine (`game/`) is the single source of truth.** The web client
+does NOT reimplement rules — it renders state and sends actions.
+
+- `server.py` — **Flask, stateful** (`Session` holds one game), preloads the PPO
+  model. Endpoints:
+  - `POST /api/new` (players list + seed) → builds board via `generate_board`.
+  - `GET  /api/state` → full serialized board state.
+  - `GET  /api/shop-options` → valid + affordable placements for the active human
+    (computed by `can_place_snake` + `calculate_snake_cost`).
+  - `POST /api/buy` {head,tail} → `buy_snake`.
+  - `POST /api/turn` → `do_turn` (active player; AI auto via `ppo_decision`/
+    `expectimax_decision`); returns logs + `move` {from,landing,final,roll} + state.
+  - `POST /api/quit` → reset session. `POST /api/generate-board` → lobby preview only.
+- `web/index.html` — premium UI: menu → lobby → game (canvas) → victory; modals
+  (settings, rules, **snake confirm**).
+- `web/app.js` — **thin client**: canvas render + audio + animations only. Turns
+  call `/api/turn` then animate the reported move (dice → walk → ladder/snake jump
+  → bomb/bankruptcy spin). **Chess-style snake placement**: 🎯 button → click a
+  glowing HEAD → glowing affordable TAILs (from `/api/shop-options`) → confirm
+  dialog (cost + projected points) → head→tail grow in the player's color → `/api/buy`.
+  No JS rules (cost/validity/movement all server-side). Tile point values drawn on cells.
+- `web/style.css` — premium styling (teammate-owned).
+- Legacy/unused: `ui/web/` (old stdlib version), `ui/renderer.py` (Pygame).
 
 ## Logging (`game/log.py`)
 

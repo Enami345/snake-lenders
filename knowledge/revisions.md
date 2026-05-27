@@ -65,3 +65,12 @@ Ranked by importance. P0 = breaks core premise or grader claims. P1 = real bugs.
 - [x] **Ladder anti-clutter** — jump capped 5–20; endpoints spaced ≥ `MIN_LADDER_GAP=6` so ladders distribute across the board (no overlapping pile).
 - [x] **Web polish** — title page → config → **loading overlay (progress bar)** → board; **per-step token animation** (`do_turn` returns a `move` breakdown); **threaded server** (fixes browser hang); `/api/quit` reset so New game / refresh behave; POST error-handling (no silent hangs).
 - ⚠️ **Tradeoff (documented):** exact-head makes snakes weak → shipped PPO ~level with Easy in bot-vs-bot sims (~42%); still beats humans. Retrain-for-exact-head optional (declined). See [training.md](training.md).
+
+## Engine-driven web (no duplicated game logic)
+
+- [x] **Web is now a thin client over the Python engine** — a teammate's premium Flask UI (`server.py` + `web/`) had **reimplemented all rules in JS** (with stale strike-range + steal). Removed that duplication; the engine in `game/` is the single source of truth.
+- [x] **`server.py` → stateful, engine-driven.** Endpoints: `/api/new`, `/api/state`, `/api/shop-options` (valid placements from `can_place_snake`+`calculate_snake_cost`), `/api/buy` (`buy_snake`), `/api/turn` (`do_turn`; AI auto), `/api/quit`, `/api/generate-board` (lobby preview).
+- [x] **`web/app.js` gutted of logic** — deleted JS movement/cascade/`getStrikingSnake`/steal/bankruptcy + cost/canPlace mocks + replay re-sim. Turns call `/api/turn` and animate the reported `move`; buys via `/api/buy`. Kept canvas render + audio + animations.
+- [x] **Chess-style snake placement** — 🎯 button → click glowing HEAD → glowing affordable TAILs (from `/api/shop-options`) → confirm dialog (cost + projected points) → head→tail grow in player color → `/api/buy`.
+- [x] **Web bug fixes:** shop now actually opens (players weren't given `snake_count`); dice face shows the real rolled number; tile point values drawn on cells; **bomb + bankruptcy animation** (blast + spin to tile 0); robust `api()` error (no JSON-parse crash on stale server). Web port is **5000** (Flask).
+- Note: `ui/web/` (old stdlib UI) is now unused/legacy; `requirements.txt` includes `flask`, `flask-cors`.

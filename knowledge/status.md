@@ -16,9 +16,11 @@ refresh-resume. (Pending a commit.)
 
 ## What's Included / Working
 
-- **Web UI** (`ui/web/`, stdlib, threaded) — title page → config → loading
-  overlay → board with **per-step token animation**, shop + log; New game resets,
-  refresh resumes. Primary UI. (`python main.py --web`)
+- **Web UI** (`server.py` Flask + `web/`, **engine-driven thin client**) — premium
+  canvas board, audio, **chess-style snake placement** (glow heads/tails + confirm
+  dialog + grow animation), per-step token animation, bomb/bankruptcy animation,
+  tile point values. All rules run server-side via `game/`. (`python main.py --web`
+  → localhost:5000). Legacy `ui/web/` (stdlib) is unused.
 - Console + legacy Pygame UI still present.
 - **Multiplayer** 2-4 players, 0-N humans, **mixed Easy/Hard** AIs (pick how many
   Hard), shuffled turns.

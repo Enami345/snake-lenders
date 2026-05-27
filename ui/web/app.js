@@ -1,4 +1,4 @@
-// Snakes & Lenders — minimal frontend. Teammate will redesign.
+ // Snakes & Lenders — minimal frontend. Teammate will redesign.
 "use strict";
 
 const $ = (id) => document.getElementById(id);
