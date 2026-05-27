@@ -42,17 +42,9 @@ def _prompt_int(msg, lo, hi):
         print(f"  Enter a number between {lo} and {hi}.")
 
 
-def _prompt_difficulty():
-    while True:
-        d = input("  AI difficulty (easy/hard): ").strip().lower()
-        if d in ("easy", "hard"):
-            return d
-        print("  Type 'easy' or 'hard'.")
-
-
 def resolve_setup(args):
-    """Return (n_players, n_humans, difficulty) from flags, prompting for
-    anything not supplied."""
+    """Return (n_players, n_humans, n_hard) from flags, prompting for
+    anything not supplied. n_hard = how many of the AIs are Hard (rest Easy)."""
     n_players = args.players if args.players is not None else \
         _prompt_int("  Number of players (2-4): ", 2, 4)
 
@@ -61,27 +53,41 @@ def resolve_setup(args):
     n_humans = min(n_humans, n_players)
 
     n_ai = n_players - n_humans
-    difficulty = args.difficulty
-    if n_ai > 0 and difficulty is None:
-        difficulty = _prompt_difficulty()
-    return n_players, n_humans, (difficulty or "easy")
+    if n_ai <= 0:
+        return n_players, n_humans, 0
+
+    # How many Hard AIs (the rest are Easy). Flags: --hard-ais wins; else
+    # --difficulty easy/hard means none/all hard; else prompt.
+    if args.hard_ais is not None:
+        n_hard = args.hard_ais
+    elif args.difficulty == "hard":
+        n_hard = n_ai
+    elif args.difficulty == "easy":
+        n_hard = 0
+    else:
+        n_hard = _prompt_int(f"  How many Hard AIs (0-{n_ai}, rest Easy): ",
+                             0, n_ai)
+    return n_players, n_humans, max(0, min(n_ai, n_hard))
 
 
-def build_players(n_players, n_humans, difficulty):
-    """Build the player list (humans + AI of one difficulty), then SHUFFLE
-    the turn order so no seat has a fixed first-mover advantage."""
+def build_players(n_players, n_humans, n_hard):
+    """Build the player list: humans, then n_hard Hard AIs + the rest Easy
+    AIs. Turn order is SHUFFLED so no seat has a first-mover advantage."""
     from game.models import Player
+
+    n_ai = n_players - n_humans
+    n_hard = max(0, min(n_ai, n_hard))
+    n_easy = n_ai - n_hard
 
     players = []
     for i in range(n_humans):
-        name = "You" if n_humans == 1 else f"Human {i + 1}"
-        players.append(Player(0, name))
-
-    n_ai = n_players - n_humans
-    label = "Hard AI" if difficulty == "hard" else "Easy AI"
-    for i in range(n_ai):
-        ai_name = label if n_ai == 1 else f"{label} {i + 1}"
-        players.append(Player(0, ai_name, is_ai=True, ai_difficulty=difficulty))
+        players.append(Player(0, "You" if n_humans == 1 else f"Human {i + 1}"))
+    for i in range(n_hard):
+        players.append(Player(0, "Hard AI" if n_hard == 1 else f"Hard AI {i + 1}",
+                              is_ai=True, ai_difficulty="hard"))
+    for i in range(n_easy):
+        players.append(Player(0, "Easy AI" if n_easy == 1 else f"Easy AI {i + 1}",
+                              is_ai=True, ai_difficulty="easy"))
 
     random.shuffle(players)                 # randomized turn order
     for idx, p in enumerate(players):       # reassign stable ids 0..N-1
@@ -110,7 +116,10 @@ def main():
     parser.add_argument("--phase",      type=int, default=None, choices=[1, 2])
     parser.add_argument("--players",    type=int, default=None, choices=[2, 3, 4])
     parser.add_argument("--humans",     type=int, default=None, choices=[0, 1, 2, 3, 4])
-    parser.add_argument("--difficulty", type=str, default=None, choices=["easy", "hard"])
+    parser.add_argument("--difficulty", type=str, default=None, choices=["easy", "hard"],
+                        help="all AIs this difficulty (shortcut for --hard-ais)")
+    parser.add_argument("--hard-ais",   type=int, default=None, dest="hard_ais",
+                        help="how many AIs are Hard (rest Easy)")
     parser.add_argument("--train",      action="store_true")
     parser.add_argument("--steps",      type=int, default=100_000)
     parser.add_argument("--seed",       type=int, default=None)
@@ -146,13 +155,13 @@ def main():
         print("  Phase 1 complete!")
         return
 
-    # ── Setup: players / humans / difficulty (prompt or flags) ────
-    n_players, n_humans, difficulty = resolve_setup(args)
-    players   = build_players(n_players, n_humans, difficulty)
+    # ── Setup: players / humans / hard-AI count (prompt or flags) ──
+    n_players, n_humans, n_hard = resolve_setup(args)
+    players   = build_players(n_players, n_humans, n_hard)
     ppo_model = load_ppo_if_needed(players)
 
     order = " → ".join(p.name for p in players)
-    print(f"[Setup] {n_players} players, {n_humans} human(s). "
+    print(f"[Setup] {n_players} players, {n_humans} human(s), {n_hard} Hard AI. "
           f"Turn order (shuffled): {order}")
 
     # ── Generate board ────────────────────────────────────────────

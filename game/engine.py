@@ -24,19 +24,11 @@ PRICE_ALPHA      = 0.9   # sub-linear: long, devastating snakes stay affordable
 MIN_SNAKE_COST   = 12    # so you can SAVE UP for a big knockback (strategy)
 MAX_SNAKE_HEAD   = 90    # player-placed snakes (board snakes may go higher)
 
-# A snake bites if you land in its "strike range": the head tile or the
-# STRIKE_ZONE tiles just below it (its open mouth). Jumping clean over the
-# head is safe, and you can always roll past, so there is no softlock — but
-# a well-placed snake catches a passing opponent ~50% of the time, which
-# makes strategic placement actually pay off.
-STRIKE_ZONE = 4
-
-# A player-placed snake also ROBS its victim: on a bite the victim loses
-# points (flat + a slice of their wallet), transferred to the snake's
-# owner. Double-punish — drives the victim toward bankruptcy and self-
-# funds the attacker's next trap. Board snakes don't steal.
-STEAL_FLAT = 15
-STEAL_PCT  = 0.30
+# Snakes bite ONLY on landing exactly on the head tile. STRIKE_ZONE adds
+# this many tiles below the head to the bite range (0 = exact-head only;
+# the game's chosen rule). Larger values make snakes fire more often (and
+# the AI much stronger) at the cost of the clean "step on the head" feel.
+STRIKE_ZONE = 0
 
 # Anti-softlock / anti-wall: don't let snake heads form a long run of
 # adjacent tiles (overlapping strike ranges) that gets too sticky to pass.
@@ -181,32 +173,12 @@ def _apply_snakes(board: BoardState, player: Player,
     while True:
         snake = _striking_snake(board, player.position, player.player_id)
         if snake:
-            logs.append(f"  🐍 Snake! {player.name} stepped into the "
-                        f"strike range of snake {snake.head} and slides "
-                        f"from {player.position} to {snake.tail}")
+            logs.append(f"  🐍 Snake! {player.name} landed on snake "
+                        f"{snake.head} and slides to {snake.tail}")
             player.position = snake.tail
-            _steal_points(board, player, snake, logs)
             _consume_snake(board, snake)
         else:
             break
-
-
-def _steal_points(board: BoardState, victim: Player,
-                  snake: Snake, logs: list) -> None:
-    """A player-placed snake robs its victim, paying the owner."""
-    if snake.owner_id < 0:
-        return
-    amount = STEAL_FLAT + int(max(victim.points, 0) * STEAL_PCT)
-    taken  = min(amount, max(victim.points, 0))
-    solvent = victim.deduct_points(amount)
-    owner = next((p for p in board.players
-                  if p.player_id == snake.owner_id), None)
-    if owner is not None and owner is not victim and taken > 0:
-        owner.add_points(taken)
-        logs.append(f"  💸 {snake.head}-snake robs {taken} pts from "
-                    f"{victim.name} → {owner.name}")
-    if not solvent:
-        logs.append(f"  ☠️ {victim.name} went BANKRUPT — reset to tile 0!")
 
 
 def _apply_ladders(board: BoardState, player: Player,
@@ -328,16 +300,24 @@ def do_turn(board: BoardState, shop_decision=None) -> dict:
             bought = success
 
     # Roll and move
+    from_pos  = player.position
     roll      = roll_dice()
     move_logs = move_player(board, player, roll)
     logs.extend(move_logs)
+
+    # Move breakdown for UI animation: walk from_pos → landing (dice), then
+    # any jump to final (ladder climb / snake slide / bankruptcy reset).
+    landing = from_pos + roll if from_pos + roll <= 100 else from_pos
+    move = {"player_id": player.player_id, "name": player.name,
+            "roll": roll, "from": from_pos, "landing": landing,
+            "final": player.position}
 
     # Check win
     winner = check_winner(board)
     if winner:
         logs.append(f"\n🏆 {winner.name} wins the game!")
-        return {"logs": logs, "winner": winner, "bought": bought}
+        return {"logs": logs, "winner": winner, "bought": bought, "move": move}
 
     # Advance turn
     board.next_turn()
-    return {"logs": logs, "winner": None, "bought": bought}
+    return {"logs": logs, "winner": None, "bought": bought, "move": move}

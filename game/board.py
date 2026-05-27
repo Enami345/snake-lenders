@@ -39,7 +39,7 @@ def _place_ladders(rng: random.Random, forbidden: set) -> list:
     while len(ladders) < NUM_LADDERS and attempts < 1000:
         attempts += 1
         bottom = rng.randint(2, 80)
-        jump   = rng.randint(10, 30)
+        jump   = rng.randint(5, 20)   # cap climbs so no absurd 42->90 leaps
         top    = bottom + jump
 
         if top >= 100:

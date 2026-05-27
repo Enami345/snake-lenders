@@ -13,60 +13,122 @@ const api = async (path, body) => {
 
 let state = null;
 
-// ── Setup ──
-$("players").addEventListener("change", syncHumansMax);
-function syncHumansMax() {
-  const n = +$("players").value;
-  [...$("humans").options].forEach(o => { o.disabled = +o.value > n; });
-  if (+$("humans").value > n) $("humans").value = n;
-}
-syncHumansMax();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const STEP_MS = 170;   // per-tile walk
+const JUMP_MS = 480;   // ladder climb / snake slide
+let busy = false;
 
-function enterGame() {
-  $("setup").classList.add("hidden");
-  $("game").classList.remove("hidden");
-  $("rollBtn").disabled = false;
-  $("winner").classList.add("hidden");
+// ── Screen management (title → setup → game; loading is an overlay) ──
+const SCREENS = ["title", "setup", "game"];
+function show(id) {
+  SCREENS.forEach((s) => $(s).classList.toggle("hidden", s !== id));
+}
+
+$("playBtn").addEventListener("click", () => show("setup"));
+$("backBtn").addEventListener("click", () => show("title"));
+
+// ── Setup dropdown bounding ──
+$("players").addEventListener("change", syncSetup);
+$("humans").addEventListener("change", syncSetup);
+function syncSetup() {
+  const n = +$("players").value;
+  [...$("humans").options].forEach((o) => { o.disabled = +o.value > n; });
+  if (+$("humans").value > n) $("humans").value = n;
+  const nAi = n - +$("humans").value;          // Hard AIs can't exceed AI count
+  [...$("hardais").options].forEach((o) => { o.disabled = +o.value > nAi; });
+  if (+$("hardais").value > nAi) $("hardais").value = nAi;
+}
+syncSetup();
+
+// ── Loading overlay with a staged progress bar ──
+async function runLoading(steps) {
+  $("loading").classList.remove("hidden");
+  $("barFill").style.width = "0%";
+  for (let i = 0; i < steps.length; i++) {
+    $("loadMsg").textContent = steps[i];
+    $("barFill").style.width = Math.round(((i + 1) / steps.length) * 100) + "%";
+    await sleep(380);
+  }
 }
 
 $("startBtn").addEventListener("click", async () => {
-  state = await api("/api/new", {
+  const payload = {
     players: +$("players").value,
     humans: +$("humans").value,
-    difficulty: $("difficulty").value,
-  });
+    hard_ais: +$("hardais").value,
+  };
+  // Run the staged loading animation and the actual request together.
+  const [, st] = await Promise.all([
+    runLoading(["Generating board…", "Loading AI model…",
+                "Placing snakes & ladders…", "Ready!"]),
+    api("/api/new", payload),
+  ]);
+  state = st;
+  $("loading").classList.add("hidden");
   $("log").textContent = "";
-  enterGame();
+  show("game");
+  $("rollBtn").disabled = false;
+  $("winner").classList.add("hidden");
   render();
 });
 
-$("newBtn").addEventListener("click", () => {
-  $("game").classList.add("hidden");
-  $("setup").classList.remove("hidden");
+$("newBtn").addEventListener("click", async () => {
+  await api("/api/quit", {});      // fully reset the server session
+  state = null;
   $("log").textContent = "";
   $("winner").classList.add("hidden");
+  show("title");
 });
 
-// Resume an in-progress game on page refresh (server keeps the session).
+// On load: resume an in-progress game, else show the title page.
 async function init() {
   const s = await api("/api/state");
   if (s && s.started) {
     state = s;
-    enterGame();
+    show("game");
+    $("rollBtn").disabled = !!s.winner;
     render();
     if (s.winner) showWinner(s.winner);
+  } else {
+    show("title");
   }
 }
 init();
 
-// ── Turn / shop ──
 $("rollBtn").addEventListener("click", async () => {
-  const res = await api("/api/turn", {});
-  state = res.state;
-  appendLog(res.logs);
-  render();
-  if (res.winner) showWinner(res.winner);
+  if (busy) return;
+  busy = true; $("rollBtn").disabled = true;
+  try {
+    const res = await api("/api/turn", {});
+    if (res.error) { appendLog(["[server error] " + res.error]); console.error(res.trace || res.error); return; }
+    state = res.state;
+    if (res.move) {
+      appendLog([`🎲 ${res.move.name} rolled ${res.move.roll}`]);
+      await animateMove(res.move);
+    }
+    appendLog(res.logs);
+    render();
+    if (res.winner) showWinner(res.winner);
+  } finally {
+    busy = false;
+    if (!(state && state.winner)) $("rollBtn").disabled = false;
+  }
 });
+
+// Walk the mover's token one tile per dice step, then animate any
+// ladder/snake/bankruptcy jump. Mutates state then renders each frame.
+async function animateMove(m) {
+  const pl = state.players.find((p) => p.id === m.player_id);
+  if (!pl) return;
+  const final = pl.position;            // server's authoritative end tile
+  for (let t = m.from; t <= m.landing; t++) {
+    pl.position = t; render(); await sleep(STEP_MS);
+  }
+  if (final !== m.landing) {             // ladder / snake / reset
+    pl.position = final; render(); await sleep(JUMP_MS);
+  }
+  pl.position = final;
+}
 
 $("buyBtn").addEventListener("click", async () => {
   const res = await api("/api/buy", {

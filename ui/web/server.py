@@ -11,8 +11,8 @@ Run:
 
 import os
 import json
+import traceback
 import http.server
-import socketserver
 
 from game.board import generate_board
 from game.engine import do_turn, buy_snake, can_place_snake, calculate_snake_cost
@@ -30,9 +30,9 @@ class Session:
         self.ppo_model = None
         self.winner = None
 
-    def new_game(self, n_players, n_humans, difficulty, seed=None):
+    def new_game(self, n_players, n_humans, n_hard, seed=None):
         from main import build_players, load_ppo_if_needed
-        players = build_players(n_players, n_humans, difficulty)
+        players = build_players(n_players, n_humans, n_hard)
         self.ppo_model = load_ppo_if_needed(players)
         self.board = generate_board(seed=seed, players=players)
         self.winner = None
@@ -66,7 +66,8 @@ class Session:
         result = do_turn(self.board, shop_decision=shop)
         if result["winner"]:
             self.winner = result["winner"].name
-        return {"logs": result["logs"], "winner": self.winner}
+        return {"logs": result["logs"], "winner": self.winner,
+                "move": result.get("move")}
 
     def state(self):
         b = self.board
@@ -145,41 +146,48 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = self._body_json()
-        if self.path == "/api/new":
-            try:
-                n = int(body.get("players", 2))
-                h = int(body.get("humans", 1))
-                d = body.get("difficulty", "easy")
-                n = max(2, min(4, n))
-                h = max(0, min(n, h))
-                d = d if d in ("easy", "hard") else "easy"
-                self._json(200, SESSION.new_game(n, h, d))
-            except (ValueError, TypeError) as e:
-                self._json(400, {"error": str(e)})
-        elif self.path == "/api/buy":
-            ok, msg = SESSION.buy(int(body.get("head", 0)),
-                                  int(body.get("tail", 0)))
-            self._json(200, {"ok": ok, "message": msg, "state": SESSION.state()})
-        elif self.path == "/api/turn":
-            res = SESSION.turn()
-            self._json(200, {"logs": res["logs"], "winner": res["winner"],
-                             "state": SESSION.state()})
-        elif self.path == "/api/cost":
-            # quote a snake cost for the UI
-            b = SESSION.board
-            if b is None:
-                self._json(200, {"cost": None})
+        try:
+            if self.path == "/api/new":
+                n = max(2, min(4, int(body.get("players", 2))))
+                h = max(0, min(n, int(body.get("humans", 1))))
+                hard = max(0, min(n - h, int(body.get("hard_ais", 0))))
+                self._json(200, SESSION.new_game(n, h, hard))
+            elif self.path == "/api/buy":
+                ok, msg = SESSION.buy(int(body.get("head", 0)),
+                                      int(body.get("tail", 0)))
+                self._json(200, {"ok": ok, "message": msg,
+                                 "state": SESSION.state()})
+            elif self.path == "/api/quit":
+                SESSION.board = None
+                SESSION.winner = None
+                self._json(200, {"ok": True})
+            elif self.path == "/api/turn":
+                res = SESSION.turn()
+                self._json(200, {"logs": res["logs"], "winner": res["winner"],
+                                 "move": res.get("move"),
+                                 "state": SESSION.state()})
+            elif self.path == "/api/cost":
+                b = SESSION.board
+                p = b.active_player if b else None
+                cost = (calculate_snake_cost(p, int(body.get("head", 0)),
+                                             int(body.get("tail", 0)))
+                        if p else None)
+                self._json(200, {"cost": cost})
             else:
-                p = b.active_player
-                self._json(200, {"cost": calculate_snake_cost(
-                    p, int(body.get("head", 0)), int(body.get("tail", 0)))})
-        else:
-            self._send(404, "not found", "text/plain")
+                self._send(404, "not found", "text/plain")
+        except Exception as e:
+            # Always respond (otherwise the browser hangs forever) AND log
+            # the full traceback to the server terminal so we can see it.
+            tb = traceback.format_exc()
+            print("[Web] ERROR handling", self.path, "\n", tb)
+            self._json(500, {"error": str(e), "trace": tb})
 
 
 def run_server(port=PORT):
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("", port), Handler) as httpd:
+    # ThreadingHTTPServer: browsers open multiple/keep-alive connections; a
+    # single-threaded server would deadlock (one request blocks the rest).
+    http.server.ThreadingHTTPServer.allow_reuse_address = True
+    with http.server.ThreadingHTTPServer(("", port), Handler) as httpd:
         print(f"[Web] Snakes & Lenders at http://localhost:{port}  (Ctrl+C to stop)")
         try:
             httpd.serve_forever()
