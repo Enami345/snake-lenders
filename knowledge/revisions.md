@@ -49,3 +49,10 @@ Ranked by importance. P0 = breaks core premise or grader claims. P1 = real bugs.
 - [x] **UI shop head cap** — was hardcoded `20-80`, now uses `MAX_SNAKE_HEAD` (90).
 - [x] **Fix README** — model now included; README rewritten.
 - [WONTFIX] **Align manuscript vs code** — manuscript is a PDF (can't edit here); code diverged further (sub-linear pricing, strike range, point steal). Divergence is documented in `knowledge/manuscript.md`.
+
+## Beyond P0-P2 (this session, post-push)
+
+- [x] **Web UI** (`ui/web/`) — stdlib http.server + HTML/CSS/JS; setup screen → board; resumes on refresh. `python main.py --web`. Removed old `--mode` flags. Pygame kept.
+- [x] **PPO improvements (opponent pool / self-play)** — `train_ppo(opponent_pool=True)` trains vs {Easy, Strong heuristic, frozen best PPO}; added `expectimax.strong_decision`. Trained 2.5M; promoted the self-play model to `ai/ppo_model.zip` (more robust vs Strong: 83%→89%; ~tie head-to-head vs plain 2.5M). Removed stale `ppo_model_100k.zip`; refreshed backup.
+- [x] **Model load resilience** — `load_ppo_model` tries main → backup (survives mid-write training); graceful Expectimax fallback. AI logs use real player names + `(PPO)` tag.
+- [x] **AI training + quality fully documented** — see [training.md](training.md) (timesteps↔games, plateau, model lineage, full win-rate battery).

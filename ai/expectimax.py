@@ -275,8 +275,31 @@ def expectimax_decision(board: BoardState, player: Player) -> dict | None:
     if player.points - cost < EASY_BUFFER:
         return None   # over-cautious hoarding
 
-    gprint(f"  [Easy] Buying snake {shop['head']}→{shop['tail']} (cost: {cost})")
+    gprint(f"  [{player.name}] buys snake {shop['head']}→{shop['tail']} "
+           f"(cost: {cost})")
     return shop
+
+
+def strong_decision(board: BoardState, player: Player) -> dict | None:
+    """
+    A tough hand-tuned saboteur (used as a hard training opponent — NOT the
+    Easy bot): keep a bomb-safe buffer, then play win-denial lurks near the
+    goal, big catch-optimal knockbacks otherwise, cheap traps as a fallback.
+    """
+    if not player.can_buy_snake:
+        return None
+    opp = _leading_opponent(board, player)
+    if opp is None or opp.position < 8:
+        return None
+    strategies = (propose_lurk,) if opp.position >= 60 else ()
+    strategies += (propose_big_snake, propose_cheap_trap)
+    for fn in strategies:
+        shop = fn(board, player)
+        if shop:
+            cost = calculate_snake_cost(player, shop["head"], shop["tail"])
+            if player.points - cost >= 35:      # bomb-safe buffer
+                return shop
+    return None
 
 
 # ── Placement strategies (for the PPO agent's expanded action space) ──────────

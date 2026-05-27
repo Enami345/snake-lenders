@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Snakes &amp; Lenders</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <h1>🐍 Snakes &amp; Lenders</h1>
+
+  <!-- ── Intro / setup screen ── -->
+  <section id="setup">
+    <h2>New Game</h2>
+    <label>Players
+      <select id="players">
+        <option>2</option><option>3</option><option>4</option>
+      </select>
+    </label>
+    <label>Humans
+      <select id="humans">
+        <option>0</option><option selected>1</option>
+        <option>2</option><option>3</option><option>4</option>
+      </select>
+    </label>
+    <label>AI difficulty
+      <select id="difficulty">
+        <option value="easy">Easy (Expectimax)</option>
+        <option value="hard">Hard (PPO)</option>
+      </select>
+    </label>
+    <button id="startBtn">Start</button>
+    <p class="hint">Humans take turns on this screen. AI plays automatically.</p>
+  </section>
+
+  <!-- ── Game screen ── -->
+  <section id="game" class="hidden">
+    <div id="boardWrap">
+      <div id="board"></div>
+    </div>
+
+    <aside id="panel">
+      <div id="turnInfo"></div>
+      <div id="players"></div>
+
+      <div id="shop" class="hidden">
+        <h3>Snake Shop</h3>
+        <label>Head <input id="head" type="number" min="20" max="90" /></label>
+        <label>Tail <input id="tail" type="number" min="1" max="89" /></label>
+        <button id="buyBtn">Buy snake</button>
+        <div id="shopMsg" class="msg"></div>
+      </div>
+
+      <button id="rollBtn">Roll / Next turn</button>
+      <button id="newBtn" class="secondary">New game</button>
+
+      <div id="winner" class="hidden"></div>
+      <h3>Log</h3>
+      <div id="log"></div>
+    </aside>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>

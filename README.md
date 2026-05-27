@@ -66,19 +66,23 @@ snake-lenders/
 
 ```bash
 # from the project root, with the venv activated
-python main.py                          # Human vs Human (Pygame UI)
-python main.py --mode hvai              # Human vs Easy AI (Expectimax)
-python main.py --mode hvai --hard       # Human vs Hard AI (PPO)
-python main.py --mode aivai             # Easy AI vs Hard AI
-python main.py --console                # Play in the terminal instead of the UI
-python main.py --phase 1                # Board-generation test
-python main.py --train                  # (Re)train the PPO Hard AI (~2-3 min / 100k steps)
-python main.py --train --steps 300000   # Longer training, stronger model
+python main.py --web        # Web UI → http://localhost:8000  (recommended)
+python main.py --console    # play in the terminal
+python main.py              # legacy Pygame UI
+
+# Setup is asked interactively (players 2-4 / humans 0-N / AI difficulty),
+# or skip the prompts with flags:
+python main.py --players 4 --humans 1 --difficulty hard
+python main.py --players 2 --humans 2                  # local 2-human
+python main.py --players 4 --humans 0 --difficulty easy --web   # AI watch mode
+
+python main.py --phase 1                # board-generation test
+python main.py --train --steps 2500000  # (re)train the PPO Hard AI
 ```
 
-A trained `ai/ppo_model.zip` is **included**, so Hard mode works out of the box.
-If the model is missing or fails to load, Hard mode automatically falls back to
-the Expectimax AI.
+A trained `ai/ppo_model.zip` is **included** (a 2.5M-step self-play model), so
+Hard mode works out of the box. A stable `ai/ppo_model_backup.zip` is used if the
+main file is missing/mid-write; if neither loads, Hard falls back to Expectimax.
 
 ---
 
@@ -157,8 +161,11 @@ A neural-network agent trained via reinforcement learning (`stable-baselines3`):
 - Places traps **catch-optimally** (head positioned so its strike range covers the
   target's dice range) for maximum knockback + point theft, keeps a bomb buffer,
   and parks win-denial snakes against an almost-finished opponent.
-- Trained by self-play against the Easy opponent; rewarded for winning and for the
-  setback it inflicts. **Wins ~94% of games vs Easy** (300-game evaluation).
+- Trained against an **opponent pool / self-play** ({Easy, Strong heuristic, frozen
+  best PPO}); rewarded for winning and for the setback it inflicts.
+- Shipped model is **2.5M steps**. Measured: **~89-91% vs Easy, ~89% vs a strong
+  heuristic**, and dominates 4-player free-for-alls (~80% vs 3 strong bots, random
+  = 25%). See `knowledge/training.md` for the full evaluation.
 - A trained model ships with the repo. Retrain anytime with `python main.py
   --train` (or `--steps 300000` for longer).
 

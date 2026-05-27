@@ -11,9 +11,11 @@ import os
 import numpy as np
 from game.models import BoardState, Player
 from game.engine import calculate_snake_cost, can_place_snake
+import random
+
 from ai.expectimax import (find_best_snake_to_buy, expectimax_decision,
-                           propose_cheap_trap, propose_big_snake,
-                           propose_lurk)
+                           strong_decision, propose_cheap_trap,
+                           propose_big_snake, propose_lurk)
 
 # PPO action space — the policy picks a STRATEGY each turn (this is what
 # gives Hard a real edge over Easy's single fixed heuristic):
@@ -34,8 +36,11 @@ def _action_to_shop(board, player, action):
         return propose_lurk(board, player)
     return None
 
-# Path where the trained model is saved/loaded
-MODEL_PATH = "ai/ppo_model.zip"
+# Path where the trained model is saved/loaded. BACKUP_PATH is a stable
+# copy used as a fallback when the main file is missing or mid-write
+# (e.g. while a training run is overwriting it).
+MODEL_PATH  = "ai/ppo_model.zip"
+BACKUP_PATH = "ai/ppo_model_backup.zip"
 
 
 # ── State Encoder ─────────────────────────────────────────────────────────────
@@ -96,10 +101,14 @@ def encode_state(board: BoardState, player: Player) -> np.ndarray:
 
 # ── PPO Training Environment ───────────────────────────────────────────────────
 
-def build_training_env():
+def build_training_env(opponent_pool=False):
     """
     Build a Gymnasium-compatible environment for PPO training.
-    Only imported when training — not needed just to play.
+
+    opponent_pool=False → opponent is the weak Easy bot (original).
+    opponent_pool=True  → each episode the opponent is drawn from a POOL
+        {Easy, Strong heuristic, frozen current-best PPO} so the agent
+        learns against varied/stronger play (self-play), not one weak bot.
     """
     try:
         import gymnasium as gym
@@ -111,6 +120,18 @@ def build_training_env():
         raise ImportError(
             "Training requires: pip install stable-baselines3 numpy gymnasium"
         )
+
+    # Build the opponent decider pool once.
+    def _easy(board, p):   return expectimax_decision(board, p)
+    def _strong(board, p): return strong_decision(board, p)
+    deciders = [_easy]
+    if opponent_pool:
+        deciders = [_easy, _strong]
+        try:                                   # add frozen current best (self-play)
+            frozen = load_ppo_model()
+            deciders.append(lambda board, p: ppo_decision(board, p, frozen))
+        except Exception:
+            pass
 
     class SnakesLendersEnv(gym.Env):
         """
@@ -143,6 +164,7 @@ def build_training_env():
             ]
             self.board = generate_board(players=players)
             self.ai_player = self.board.players[0]
+            self.opp_decide = random.choice(deciders)   # this episode's opponent
             self.turn_count = 0
             return encode_state(self.board, self.ai_player), {}
 
@@ -173,7 +195,7 @@ def build_training_env():
             # ── 2. Opponents' turns (their own Expectimax) ───────────
             while winner is None and self.board.active_player.player_id != agent_id:
                 opp          = self.board.active_player
-                opp_decision = expectimax_decision(self.board, opp)
+                opp_decision = self.opp_decide(self.board, opp)
                 opp_result   = do_turn(self.board, shop_decision=opp_decision)
                 self.turn_count += 1
                 winner = opp_result["winner"]
@@ -221,16 +243,16 @@ def build_training_env():
 
 # ── Training Function ─────────────────────────────────────────────────────────
 
-def train_ppo(total_timesteps: int = 100_000):
+def train_ppo(total_timesteps: int = 100_000, opponent_pool: bool = False,
+              save_path: str = MODEL_PATH):
     """
-    Train the PPO agent via self-play and save the model.
+    Train the PPO agent and save the model.
 
     Args:
-        total_timesteps: How many environment steps to train for.
-                         100,000 = ~30 min. 500,000 = better quality.
-
-    Run this once before playing on Hard mode:
-        python -c "from ai.ppo_agent import train_ppo; train_ppo()"
+        total_timesteps: environment steps to train for.
+        opponent_pool:   if True, train against {Easy, Strong, frozen best
+                         PPO} instead of only the weak Easy bot.
+        save_path:       where to write the model (default ai/ppo_model.zip).
     """
     try:
         from stable_baselines3 import PPO
@@ -240,10 +262,10 @@ def train_ppo(total_timesteps: int = 100_000):
             "PPO training requires: pip install stable-baselines3 gymnasium"
         )
 
-    print(f"[PPO] Starting training for {total_timesteps:,} timesteps...")
-    print("[PPO] This may take several minutes. Go grab a coffee ☕")
+    print(f"[PPO] Training {total_timesteps:,} steps "
+          f"(opponent_pool={opponent_pool}) → {save_path}")
 
-    EnvClass = build_training_env()
+    EnvClass = build_training_env(opponent_pool=opponent_pool)
 
     # Use 4 parallel environments to speed up training
     vec_env = make_vec_env(EnvClass, n_envs=4)
@@ -268,26 +290,37 @@ def train_ppo(total_timesteps: int = 100_000):
         model.learn(total_timesteps=total_timesteps)
     finally:
         log.VERBOSE = True
-    model.save(MODEL_PATH)
-    print(f"[PPO] Training complete! Model saved to {MODEL_PATH}")
+    model.save(save_path)
+    print(f"[PPO] Training complete! Model saved to {save_path}")
 
 
 # ── Inference (Playing) ───────────────────────────────────────────────────────
 
 def load_ppo_model():
-    """Load the trained PPO model from disk."""
+    """Load the trained PPO model. Tries the main file first, then the
+    backup — so the game keeps working while a training run is busy
+    overwriting (or has corrupted mid-write) the main file."""
     try:
         from stable_baselines3 import PPO
     except ImportError:
         raise ImportError("pip install stable-baselines3")
 
-    if not os.path.exists(MODEL_PATH):
-        raise FileNotFoundError(
-            f"No trained model found at {MODEL_PATH}.\n"
-            f"Train first with: python -c \"from ai.ppo_agent import train_ppo; train_ppo()\""
-        )
+    last_err = None
+    for path in (MODEL_PATH, BACKUP_PATH):
+        if os.path.exists(path):
+            try:
+                model = PPO.load(path)
+                if path == BACKUP_PATH:
+                    print(f"[PPO] Loaded backup model ({path}).")
+                return model
+            except Exception as e:           # mid-write / corrupt → try next
+                last_err = e
 
-    return PPO.load(MODEL_PATH)
+    raise FileNotFoundError(
+        f"No loadable PPO model at {MODEL_PATH} or {BACKUP_PATH}"
+        + (f" (last error: {last_err})" if last_err else "")
+        + ".\nTrain first with: python main.py --train"
+    )
 
 
 def ppo_decision(board: BoardState, player: Player, model) -> dict | None:
@@ -311,6 +344,6 @@ def ppo_decision(board: BoardState, player: Player, model) -> dict | None:
     shop = _action_to_shop(board, player, int(action))
     if shop:
         from game.log import gprint
-        gprint(f"  [PPO] action {int(action)} → snake "
+        gprint(f"  [{player.name}] (PPO) snake "
                f"{shop['head']}→{shop['tail']}")
     return shop

@@ -117,3 +117,22 @@ Bankruptcy Reset (was TBD in design): Points < 0 → return to tile 1 [NOW IMPLE
 | Bombs TBD | Implemented: 5 bombs, -30 pts |
 | "Millions of simulations" for PPO | Actual: 100k steps default (4 parallel envs) |
 | α = 1.3 tunable parameter | Not in code; simplified to fixed multipliers |
+
+## Further divergence after the `refactor/economy-ai-overhaul` branch
+
+The manuscript (PDF, can't be edited from code) is now well behind the game.
+Current reality vs manuscript:
+
+| Manuscript | Current code |
+|---|---|
+| Snakes bite on exact head | Player snakes have a **strike range** (head + 2 below), single-use, **steal points**, owner-immune; board snakes exact-head |
+| Exponential pricing α=1.3 | **Sub-linear** `2 × purchase_count × length^0.9`, min 12 |
+| Generous economy | **Scarce** income (~4-14/turn); depth-scaled bombs; bankruptcy → tile 0 |
+| Easy = Expectimax (smart) | Easy = **deliberately weak** Expectimax baseline |
+| Hard = PPO (long-term) | PPO **Discrete(4)** strategy space, catch-optimal placement, **beats Easy ~94%** |
+| Bounce-back on overshoot | **Exact roll to win** (stay put on overshoot) |
+| 2-player focus | **2-4 players**, 0-N humans, shuffled turns |
+| (UI unspecified) | **Web UI** (stdlib) primary; Pygame legacy |
+
+If the manuscript must match the build for submission, update the PDF — the code
+is the source of truth now.

@@ -1,64 +1,60 @@
-# Snakes & Lenders — Current Status & Known Notes
+# Snakes & Lenders — Current Status & Notes
 
-## Completion Status: DONE
+## Status: working, on branch `refactor/economy-ai-overhaul`
 
-All phases complete. Game is fully playable in both Pygame UI and console mode.
-
-**Git history:**
+Big overhaul done (economy, AI, multiplayer, web UI). 2 branch commits ahead of
+`main`:
 ```
-6946a39  Include trained PPO model so groupmates skip training
-f0dfb67  Add requirements.txt and readme
-d91f65b  Move README and gitignore to root folder
-27afcea  Initial commit — Snakes & Lenders complete
+e325280  feat: local multiplayer (2-4 players) + P1/P2 fixes, logging, tests
+4372636  refactor: make the economy load-bearing and the AI difficulties real
 ```
-
-The PPO model is intentionally committed (`ai/ppo_model.zip` and `ai/ppo_model_100k.zip`) so teammates don't need to re-train. README now outdated on this point (still says model not included).
-
----
-
-## What's Included
-
-- Full Pygame UI with snake shop interaction
-- Console/terminal mode (same gameplay)
-- Expectimax AI (Easy) — no setup needed
-- PPO AI (Hard) — pre-trained model already in repo
-- Randomized board with BFS validation (ensures avg ≥ 10 turns)
-- Snake shop with ROI-based AI decision making
-- Bankruptcy mechanic
-- Exact-roll-to-win: overshoot tile 100 = invalid, stay put
+Uncommitted (this session): entry-ladder fix, gprint logging, UI shop cap, dead
+code, tests, **web UI (`ui/web/`)**, model backup-fallback, log relabel,
+refresh-resume. (Pending a commit.)
 
 ---
 
-## Untracked Folder
+## What's Included / Working
 
-- `docs/` is listed as untracked in git status — contains `G10_SnakesLenders.pdf` (project report)
-
----
-
-## Potential Issues / Notes
-
-1. **README says PPO model not included** — outdated. Model IS included now.
-2. **Console shop** asks `press Enter to roll` before shop — AI prompt says same thing for both human and AI turns (cosmetic)
-3. **PPO fallback** — Hard AI silently falls back to Expectimax if model missing; this is intentional
-4. **3-4 player support** exists in argparse (`--players`) but `hvh` and `hvai` modes hardcode 2 players; only `aivai` and `--phase 1` use `--players`
-5. **Board regeneration** — generates new random board each run; no way to replay exact same board without `--seed`
-6. **`__pycache__`** folders present in repo (not gitignored per module, just root `.gitignore`)
+- **Web UI** (`ui/web/`, stdlib) — setup screen + board + snake shop + log;
+  resumes on refresh. Primary UI. (`python main.py --web`)
+- Console + legacy Pygame UI still present.
+- **Multiplayer** 2-4 players, 0-N humans, AI fills the rest, shuffled turns.
+- **Easy AI** = weak Expectimax baseline. **Hard AI** = PPO, beats Easy ~94%.
+- Load-bearing economy: scarce points, single-use strike-range sabotage snakes
+  with point theft, depth-scaled bombs, bankruptcy → tile 0.
+- Exact-roll-to-win, anti-wall placement, owner immunity, catch-optimal AI.
+- 14 passing unit tests (`tests/test_core.py`).
+- PPO model + backup committed; auto-fallback if main is mid-write/corrupt.
 
 ---
 
-## Dependencies — Install Command
+## Verified
+
+- All P0 + P1 done; P2 done bar 2 intentional skips (manuscript=PDF, full PPO
+  per-tile decoupling).
+- Sims: Hard vs Easy ~94%; strategy vs roll-only ~57%; AI-vs-AI ~50%.
+- Tests pass; all modules import; web API smoke-tested (new/turn/state).
+
+---
+
+## Known Notes / Caveats
+
+1. **Web UI not yet tested in a real browser session** (multi-human shop flow) —
+   logic + API smoke-tested only. Needs a live pass.
+2. **4×Hard FFA drags** (300+ turns) — intentional nightmare, left as-is.
+3. **Hard while training** — if a training run is overwriting `ppo_model.zip`,
+   loads fall back to `ppo_model_backup.zip` (stable). Refresh the backup after
+   training: `copy ai\ppo_model.zip ai\ppo_model_backup.zip`.
+4. **Manuscript (docs PDF) diverged** from code — see `manuscript.md`.
+5. Bankruptcy resetting to tile 0 is intentional (brutal by design).
+
+---
+
+## Setup
 
 ```bash
-pip install pygame stable-baselines3 gymnasium numpy
+python -m venv venv && venv\Scripts\activate
+pip install -r requirements.txt      # pygame, stable-baselines3, gymnasium, numpy
 ```
-
-Or via requirements.txt:
-```bash
-pip install -r requirements.txt
-```
-
----
-
-## Python Version
-
-Requires Python 3.10+ (uses `match`-style type hints like `tuple[bool, str]` and `dict | None`).
+Python 3.10+ (uses `tuple[bool,str]` / `dict | None` hints).

@@ -3,11 +3,24 @@
 Heads up team — this branch is a big gameplay + AI overhaul. Read this before
 you pull so the new rules don't surprise you.
 
+## Latest additions (web UI, multiplayer, stronger AI)
+- **Web UI** (`python main.py --web` → http://localhost:8000). Plain
+  HTML/CSS/JS, no extra deps — this is the new primary UI (teammate will
+  restyle `ui/web/style.css`). Pygame still works.
+- **2-4 players, any mix of humans and AI**, shuffled turn order. Setup is
+  asked on launch (or `--players/--humans/--difficulty`).
+- **Stronger Hard AI:** retrained 2.5M steps with **self-play / opponent pool**.
+  Wins ~89-91% vs Easy, ~89% vs a strong heuristic, dominates 4-player FFAs.
+  Model shipped + a backup fallback. Full numbers in `knowledge/training.md`.
+- Snakes are **single-use traps with a strike range** and **steal points**; your
+  own snakes don't bite you. (See rules below.)
+- `--mode hvai/aivai` flags are gone — use `--players/--humans/--difficulty`.
+
 ## TL;DR
 - The **economy is now the core of the game.** Points are scarce; you spend them
   on snakes to sabotage opponents. Just rolling and ignoring the shop will lose.
 - **Two real difficulties:** Easy (a weak, beatable bot) and Hard (a trained PPO
-  agent that beats Easy ~94% of the time).
+  agent that beats Easy ~90% of the time and a strong heuristic ~89%).
 - A **trained PPO model is included** (`ai/ppo_model.zip`) — Hard mode works out
   of the box, no training step required.
 
@@ -16,7 +29,8 @@ you pull so the new rules don't surprise you.
 git checkout <this-branch>
 python -m venv venv && venv\Scripts\activate     # if you don't have one yet
 pip install -r requirements.txt
-python main.py --mode hvai --hard                # try the Hard AI
+python main.py --web                             # play in the browser
+# or: python main.py --players 2 --humans 1 --difficulty hard
 ```
 You do **not** need to retrain — the model is committed. (Optional: `python
 main.py --train` to regenerate it.)

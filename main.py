@@ -97,7 +97,7 @@ def load_ppo_if_needed(players):
         model = load_ppo_model()
         print("[PPO] Hard AI model loaded.")
         return model
-    except FileNotFoundError as e:
+    except Exception as e:
         print(f"[PPO] Warning: {e}")
         print("[PPO] Hard AI will use Expectimax as fallback.")
         return None
@@ -115,13 +115,21 @@ def main():
     parser.add_argument("--steps",      type=int, default=100_000)
     parser.add_argument("--seed",       type=int, default=None)
     parser.add_argument("--console",    action="store_true",
-                        help="Play in terminal instead of Pygame UI")
+                        help="Play in terminal instead of the UI")
+    parser.add_argument("--web",        action="store_true",
+                        help="Launch the web UI (browser) instead of Pygame")
     args = parser.parse_args()
 
     # ── Train PPO ─────────────────────────────────────────────────
     if args.train:
         from ai.ppo_agent import train_ppo
         train_ppo(total_timesteps=args.steps)
+        return
+
+    # ── Web UI (browser handles setup + game) ─────────────────────
+    if args.web:
+        from ui.web.server import run_server
+        run_server()
         return
 
     # ── Phase 1 board test ────────────────────────────────────────
