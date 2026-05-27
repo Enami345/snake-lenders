@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🐍 Snakes & Lenders — Strategic Sabotage Board Game</title>
+  
+  <!-- Modern Premium Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Outfit:wght@400;600;800;900&display=swap" rel="stylesheet">
+  
+  <!-- Premium Stylesheets -->
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+  <!-- ── FULLSCREEN ANIMATED BACKGROUND FOR MAIN MENU ── -->
+  <div id="main-menu-bg" class="menu-bg">
+    <div class="particle-container" id="bg-particles"></div>
+    <div class="bg-ladder-stripes"></div>
+    <div class="bg-snake-slithers" id="bg-snakes"></div>
+  </div>
+
+  <!-- ── SCREEN 1: MAIN MENU ── -->
+  <section id="screen-menu" class="screen active">
+    <div class="menu-content">
+      <div class="logo-wrap">
+        <h1 class="game-logo" id="main-title">
+          <span class="logo-emoji">🐍</span>
+          <span class="logo-gradient">SNAKES</span> 
+          <span class="logo-and">&amp;</span> 
+          <span class="logo-gradient text-lenders">LENDERS</span>
+        </h1>
+        <p class="subtitle">sabotage. economy. survival.</p>
+      </div>
+
+      <div class="menu-buttons">
+        <button id="btn-play-lobby" class="btn-premium btn-large animate-pulse">
+          <span class="btn-shine"></span>
+          🎮 START GAME
+        </button>
+        <button id="btn-open-rules" class="btn-premium btn-secondary btn-large">
+          📖 HOW TO PLAY
+        </button>
+        <button id="btn-open-settings" class="btn-premium btn-secondary btn-large">
+          ⚙️ SETTINGS
+        </button>
+      </div>
+
+      <footer class="credits">
+        <p>BSCS 3-4 | Intro to Artificial Intelligence | PUP Group 10</p>
+        <p class="authors">Cabral · Caparas · Exconde · Rivera</p>
+      </footer>
+    </div>
+  </section>
+
+  <!-- ── SCREEN 2: LOBBY / SETUP SCREEN ── -->
+  <section id="screen-lobby" class="screen hidden">
+    <div class="lobby-content glassmorphism">
+      <h2 class="section-title">🎲 Setup Board &amp; Players</h2>
+      
+      <div class="lobby-grid">
+        <!-- Player Slots Configuration -->
+        <div class="lobby-section players-config">
+          <h3>👥 Players (1 - 4)</h3>
+          <div class="players-selector">
+            <label class="config-label">Total Players
+              <select id="select-players" class="lobby-select">
+                <option value="2" selected>2 Players</option>
+                <option value="3">3 Players</option>
+                <option value="4">4 Players</option>
+              </select>
+            </label>
+          </div>
+          
+          <div id="player-slots-container" class="slots-container">
+            <!-- Dynamic Slots will be rendered here -->
+          </div>
+        </div>
+
+        <!-- Custom Settings/Seed Card -->
+        <div class="lobby-section setup-details">
+          <h3>⚙️ Board Seed &amp; Previews</h3>
+          
+          <div class="seed-input-wrap">
+            <label class="config-label">Game Seed (Optional)
+              <input type="text" id="input-seed" placeholder="Random Seed" class="lobby-input" />
+            </label>
+            <button id="btn-randomize-seed" class="btn-premium btn-tiny">🎲 Randomize</button>
+          </div>
+
+          <!-- Live Board Mini Preview -->
+          <div class="board-thumbnail-wrap">
+            <h4>Generated Board Preview</h4>
+            <div id="board-preview" class="board-preview-grid">
+              <!-- Re-generated visual thumbnail before launch -->
+              <div class="preview-placeholder">Click 'Generate Seed' for a custom board</div>
+            </div>
+            <button id="btn-preview-board" class="btn-premium btn-secondary btn-small w-100 mt-2">🔁 Preview Seed Board</button>
+          </div>
+
+          <div class="rules-quickstart">
+            <h4>💡 Quick Rules Card</h4>
+            <ul>
+              <li><strong>Exact Win:</strong> Stay put if you overshoot tile 100.</li>
+              <li><strong>Economy:</strong> Single-use traps cost more per purchase.</li>
+              <li><strong>Traps:</strong> Hit within 4 tiles of head to slide and get robbed!</li>
+              <li><strong>Bankruptcy:</strong> Under 0 pts resets you to tile 0.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="lobby-actions">
+        <button id="btn-lobby-back" class="btn-premium btn-secondary">🔙 Main Menu</button>
+        <button id="btn-lobby-start" class="btn-premium btn-glow btn-large">🚀 LAUNCH GAME</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── SCREEN 3: GAMEPLAY SCREEN ── -->
+  <section id="screen-game" class="screen hidden">
+    <div class="game-layout">
+      
+      <!-- GAMEPLAY BOARD WRAPPER -->
+      <div class="board-container">
+        <div class="board-frame glassmorphism">
+          <!-- HTML5 Canvas for ultra high fidelity rendering -->
+          <canvas id="game-canvas" width="750" height="750"></canvas>
+          <div id="canvas-overlay-container" class="canvas-overlays"></div>
+        </div>
+
+        <!-- Float Actions Bar under the board -->
+        <div class="board-actions-bar glassmorphism">
+          <div class="emote-system">
+            <span class="bar-label">💬 React:</span>
+            <div class="emote-bar">
+              <button class="btn-emote" data-emote="laughing" title="Laughing">😂</button>
+              <button class="btn-emote" data-emote="crying" title="Crying">😭</button>
+              <button class="btn-emote" data-emote="shocked" title="Shocked">😱</button>
+              <button class="btn-emote" data-emote="taunting" title="Taunting">😏</button>
+              <button class="btn-emote" data-emote="celebrating" title="Celebrating">🎉</button>
+              <button class="btn-emote" data-emote="sad" title="Sad">😢</button>
+            </div>
+          </div>
+          
+          <button id="btn-open-ingame-settings" class="btn-premium btn-secondary btn-small">⚙️ Settings</button>
+          <button id="btn-game-quit" class="btn-premium btn-danger btn-small">🏳️ Resign</button>
+        </div>
+      </div>
+
+      <!-- SIDEBAR STATS & LOGS -->
+      <aside class="sidebar-panel">
+        
+        <!-- Turn Indicator Header -->
+        <div id="active-turn-indicator" class="turn-header glassmorphism">
+          <div class="turn-label">CURRENT TURN</div>
+          <div id="turn-pname" class="turn-player-name">Loading...</div>
+          <div id="turn-pdesc" class="turn-player-desc">Please wait...</div>
+          <!-- Turn countdown timer -->
+          <div id="timer-ring-container" class="timer-ring-wrap">
+            <svg class="timer-ring" width="40" height="40">
+              <circle class="timer-ring-bg" stroke="#333" stroke-width="4" fill="transparent" r="16" cx="20" cy="20"/>
+              <circle id="timer-ring-fill" class="timer-ring-fill" stroke="#d4af37" stroke-width="4" fill="transparent" r="16" cx="20" cy="20"/>
+            </svg>
+            <span id="timer-text" class="timer-text">--</span>
+          </div>
+        </div>
+
+        <!-- Glassmorphic Player Cards Container -->
+        <div class="sidebar-section">
+          <h3>🏆 Standings &amp; Sabotages</h3>
+          <div id="players-cards" class="players-cards-container">
+            <!-- Dynamic stats cards rendered here -->
+          </div>
+        </div>
+
+        <!-- Action / Console Hub -->
+        <div class="sidebar-section action-hub glassmorphism">
+          <div id="thinking-indicator" class="thinking-indicator hidden">
+            <div class="thinking-spinner"></div>
+            <span>🤖 AI is thinking...</span>
+          </div>
+
+          <!-- HUMAN SHOP CARD (Dynamic visibility) -->
+          <div id="shop-panel" class="shop-panel hidden">
+            <h4 class="shop-title">🐍 Snake Shop</h4>
+            <div class="shop-fields">
+              <div class="shop-field">
+                <label>Head (20-90)
+                  <input type="number" id="input-shop-head" min="20" max="90" class="shop-input" />
+                </label>
+              </div>
+              <div class="shop-field">
+                <label>Tail (1-89)
+                  <input type="number" id="input-shop-tail" min="1" max="89" class="shop-input" />
+                </label>
+              </div>
+            </div>
+            
+            <div class="shop-cost-preview">
+              <span id="shop-preview-label">Cost Preview:</span>
+              <strong id="shop-preview-cost">-- pts</strong>
+            </div>
+
+            <button id="btn-shop-buy" class="btn-premium btn-glow btn-small w-100">🛒 Buy &amp; Place Snake</button>
+            <div id="shop-feedback" class="shop-feedback-message"></div>
+          </div>
+
+          <!-- ROLL ENGINE BUTTONS -->
+          <div class="dice-roll-zone">
+            <!-- CSS 3D Dice Wrapper -->
+            <div id="dice-container" class="dice-container-3d">
+              <div id="dice-cube" class="dice-cube show-front">
+                <figure class="face front">1</figure>
+                <figure class="face back">6</figure>
+                <figure class="face right">3</figure>
+                <figure class="face left">4</figure>
+                <figure class="face top">5</figure>
+                <figure class="face bottom">2</figure>
+              </div>
+            </div>
+            
+            <button id="btn-action-roll" class="btn-premium btn-large btn-glow btn-dice-roll">
+              🎲 ROLL DICE
+            </button>
+          </div>
+        </div>
+
+        <!-- Moving logs -->
+        <div class="sidebar-section log-hub glassmorphism">
+          <h3>📜 Battle Log</h3>
+          <div id="battle-log-lines" class="log-lines"></div>
+        </div>
+
+      </aside>
+
+    </div>
+  </section>
+
+  <!-- ── SCREEN 4: VICTORY SCREEN / OVERLAY ── -->
+  <div id="screen-victory" class="victory-overlay hidden">
+    <canvas id="victory-confetti" class="victory-canvas"></canvas>
+    <div class="victory-modal glassmorphism animate-bounce-in">
+      <div class="victory-emoji">🏆</div>
+      <h1 class="victory-title">VICTORY CELEBRATION!</h1>
+      <div id="victory-winner-announcement" class="winner-name">Player Name</div>
+      <p class="winner-congrats">Is the ultimate Snakes &amp; Lenders Champion!</p>
+
+      <div class="victory-details">
+        <h3>📊 Match Overview</h3>
+        <div id="victory-stats-grid" class="victory-grid">
+          <!-- Dynamic cards showing counts of snakes, bankruptcy, climbs etc -->
+        </div>
+      </div>
+
+      <div class="victory-buttons">
+        <button id="btn-victory-replay" class="btn-premium w-100 animate-pulse">📺 WATCH MATCH REPLAY (2x)</button>
+        <div class="victory-bottom-row mt-2">
+          <button id="btn-victory-lobby" class="btn-premium btn-secondary btn-small">🆕 Setup Lobby</button>
+          <button id="btn-victory-menu" class="btn-premium btn-secondary btn-small">🏠 Main Menu</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MODAL 1: SETTINGS DIALOG ── -->
+  <div id="modal-settings" class="modal hidden">
+    <div class="modal-content glassmorphism">
+      <div class="modal-header">
+        <h2>⚙️ Game Configuration</h2>
+        <span class="btn-modal-close" id="btn-close-settings">&times;</span>
+      </div>
+      
+      <div class="modal-body settings-grid">
+        
+        <!-- Audio Config -->
+        <div class="settings-group">
+          <h3>🔊 Audio Engine</h3>
+          <div class="setting-item">
+            <label>Master SFX Volume <span id="label-vol-sfx">80%</span>
+              <input type="range" id="slider-vol-sfx" min="0" max="100" value="80" class="slider" />
+            </label>
+          </div>
+          <div class="setting-item">
+            <label>Master BGM Volume <span id="label-vol-bgm">60%</span>
+              <input type="range" id="slider-vol-bgm" min="0" max="100" value="60" class="slider" />
+            </label>
+          </div>
+          <div class="setting-item flex-row">
+            <span>Play Background Music</span>
+            <label class="switch">
+              <input type="checkbox" id="toggle-bgm" checked />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Animation Config -->
+        <div class="settings-group">
+          <h3>⚡ Animations &amp; Speeds</h3>
+          <div class="setting-item">
+            <label>Master Play Speed
+              <select id="select-anim-speed" class="lobby-select">
+                <option value="slow">🐢 Slow Motion</option>
+                <option value="normal" selected>⚡ Normal Speed</option>
+                <option value="fast">🚀 Turbo Speed</option>
+                <option value="instant">💥 Instant Calculations</option>
+              </select>
+            </label>
+          </div>
+          <div class="setting-item">
+            <label>Dice Roll Duration <span id="label-dur-dice">1.2s</span>
+              <input type="range" id="slider-dur-dice" min="5" max="30" value="12" class="slider" />
+            </label>
+          </div>
+          <div class="setting-item flex-row">
+            <span>Camera Shake Effects</span>
+            <label class="switch">
+              <input type="checkbox" id="toggle-shake" checked />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          <div class="setting-item flex-row">
+            <span>Screen Particle Sparks</span>
+            <label class="switch">
+              <input type="checkbox" id="toggle-particles" checked />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          <div class="setting-item flex-row">
+            <span>RPG-style Floating Numbers</span>
+            <label class="switch">
+              <input type="checkbox" id="toggle-floating-nums" checked />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- AI and Mechanics -->
+        <div class="settings-group">
+          <h3>🤖 AI &amp; Shop Helpers</h3>
+          <div class="setting-item flex-row">
+            <span>Automatic AI Emotes</span>
+            <label class="switch">
+              <input type="checkbox" id="toggle-ai-emotes" checked />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          <div class="setting-item flex-row">
+            <span>Show Shop Placement Hints</span>
+            <label class="switch">
+              <input type="checkbox" id="toggle-shop-hints" checked />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          <div class="setting-item flex-row">
+            <span>In-Game Turn Timer</span>
+            <label class="switch">
+              <input type="checkbox" id="toggle-turn-timer" checked />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          <div class="setting-item">
+            <label>Turn Limit (Seconds) <span id="label-dur-timer">30s</span>
+              <input type="range" id="slider-dur-timer" min="10" max="60" value="30" class="slider" />
+            </label>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MODAL 2: HOW TO PLAY MODAL ── -->
+  <div id="modal-rules" class="modal hidden">
+    <div class="modal-content glassmorphism modal-medium">
+      <div class="modal-header">
+        <h2>🐍 How to Play Snakes &amp; Lenders</h2>
+        <span class="btn-modal-close" id="btn-close-rules">&times;</span>
+      </div>
+      
+      <div class="modal-body rules-body text-scroll">
+        <h3>🎯 The Core Objective</h3>
+        <p>
+          Be the first player to land <strong>exactly</strong> on tile 100. If your roll would overshoot 100, the move is invalid and you stay put.
+        </p>
+
+        <h3>💰 Economy &amp; Income</h3>
+        <p>
+          Unlike classic luck-based games, you earn points by moving across tiles (deeper tiles give more points). You spend this precious currency in the <strong>Snake Shop</strong> to place tactical traps. Income is scarce, so timing and budget management are key!
+        </p>
+
+        <h3>🛒 The Snake Shop</h3>
+        <p>
+          During the start of your turn, if you are on the board, you can buy a snake:
+        </p>
+        <ul>
+          <li><strong>Sub-linear Pricing:</strong> Shorter snakes are very cheap; long, devastating traps cost significantly more. Additionally, the price escalates with each snake you purchase!</li>
+          <li><strong>Limit:</strong> You can own at most <strong>3 active snakes</strong> on the board at once.</li>
+          <li><strong>Placement Rules:</strong> Placements are allowed between head tiles <strong>20 and 90</strong>. You cannot chain snakes head-to-tail or place on occupied/ladder tiles.</li>
+          <li><strong>Anti-Wall:</strong> You cannot place a snake that would extend a consecutive run of adjacent snake heads past 2.</li>
+        </ul>
+
+        <h3>🐍 Strike Ranges &amp; Immunity</h3>
+        <ul>
+          <li><strong>Board snakes</strong> bite only on exact head landing.</li>
+          <li><strong>Player snakes</strong> have an active **strike range** covering the head and 4 tiles below it.</li>
+          <li><strong>Immunity:</strong> You are 100% immune to your own traps.</li>
+          <li><strong>Point Theft:</strong> Getting bitten slides you back to the tail AND **robs** points from your wallet, transferring them directly to the trap's owner!</li>
+          <li>Once a player snake bites, it is **consumed** and removed from the board.</li>
+        </ul>
+
+        <h3>💣 Bombs &amp; Bankruptcy</h3>
+        <p>
+          There are 5 fixed bomb tiles on the board. Landing on one inflicts a heavy depth-scaled point penalty. If your wallet goes below 0, you go **BANKRUPT**!
+        </p>
+        <p class="highlight-danger">
+          <strong>☠️ BANKRUPTCY RESETS YOU TO TILE 0 WITH ZERO POINTS!</strong> Use safety cushions!
+        </p>
+
+        <h3>🤖 AI Opponents</h3>
+        <ul>
+          <li><strong>Easy (Expectimax):</strong> deliberate weak heuristic, reacts late, hoards points, only buys short cheap traps.</li>
+          <li><strong>Hard (PPO Neural Network):</strong> trained via reinforcement learning self-play, places catch-optimal traps, parks win-denials near the finish line, manages points aggressively.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── TOAST NOTIFICATION CONTAINER ── -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- JS Engine Scripts -->
+  <script src="/app.js"></script>
+</body>
+</html>
