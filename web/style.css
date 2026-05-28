@@ -462,32 +462,67 @@ h1, h2, h3, h4, .font-heading {
 .game-layout {
   display: grid;
   grid-template-columns: 1fr 340px;
-  gap: 25px;
+  gap: 20px;
   width: 100%;
   max-width: 1280px;
   height: calc(100vh - 40px);
   z-index: 10;
+  overflow: hidden;
+}
+
+/* Responsive: stack vertically on narrow screens */
+@media (max-width: 900px) {
+  .game-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+    height: auto;
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
+  }
 }
 
 .board-container {
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 12px;
   height: 100%;
-  justify-content: center;
+  max-height: 100%;
+  justify-content: flex-start;
+  align-items: center;
+  overflow: hidden;
 }
 
 .board-frame {
-  aspect-ratio: 1;
-  max-width: 750px;
-  max-height: 750px;
+  /* Board is always a perfect square that fits the viewport */
+  /* JS ResizeObserver dynamically sets width/height */
   width: 100%;
+  max-width: min(750px, calc(100vw - 400px), calc(100vh - 200px));
+  aspect-ratio: 1;
   overflow: hidden;
   position: relative;
   background: radial-gradient(circle at center, #1b1c2e 0%, #0e0e1a 100%);
   display: flex;
   justify-content: center;
   align-items: center;
+  flex-shrink: 0;
+}
+
+@media (max-width: 900px) {
+  .board-frame {
+    max-width: min(750px, calc(100vw - 32px), calc(100vh - 280px));
+  }
+}
+
+@media (max-height: 600px) {
+  .board-frame {
+    max-width: min(750px, calc(100vw - 400px), calc(100vh - 120px));
+  }
+}
+
+@media (max-width: 900px) and (max-height: 600px) {
+  .board-frame {
+    max-width: min(750px, calc(100vw - 32px), calc(100vh - 100px));
+  }
 }
 
 #game-canvas {
@@ -556,7 +591,19 @@ h1, h2, h3, h4, .font-heading {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 20px;
+  padding: 10px 16px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .board-actions-bar {
+    padding: 8px 12px;
+  }
+  
+  .emote-bar {
+    flex-wrap: wrap;
+  }
 }
 
 .emote-system {
@@ -638,10 +685,24 @@ h1, h2, h3, h4, .font-heading {
 .sidebar-panel {
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 12px;
   height: 100%;
+  max-height: calc(100vh - 60px);
   overflow-y: auto;
   padding-right: 2px;
+}
+
+@media (max-width: 900px) {
+  .sidebar-panel {
+    max-height: none;
+    overflow-y: visible;
+  }
+  
+  /* On mobile, hide detailed standings first, keep essentials */
+  .sidebar-section.log-hub {
+    max-height: 120px;
+    min-height: 80px;
+  }
 }
 
 .turn-header {
