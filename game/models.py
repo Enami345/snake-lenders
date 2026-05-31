@@ -6,6 +6,11 @@ Defines all core data structures used throughout the game.
 from dataclasses import dataclass, field
 from typing import Optional
 
+# Turns of bankruptcy immunity granted right after a player goes bankrupt.
+# Anti-loop: a second hit during this window clamps the wallet to 0 instead
+# of resetting position again, giving the player room to escape the trap zone.
+BANKRUPT_IMMUNITY_TURNS = 6
+
 
 @dataclass
 class Snake:
@@ -42,6 +47,10 @@ class Player:
     is_ai: bool = False
     ai_difficulty: Optional[str] = None  # 'easy' or 'hard'
     bankrupt_count: int = 0
+    # Anti-death-loop: after a bankruptcy, the player has a few turns of
+    # bankruptcy immunity — losses still hurt the wallet but won't reset
+    # the player to tile 0 again. Decremented after each of the player's turns.
+    bankrupt_immune: int = 0
 
     @property
     def snake_count(self) -> int:
@@ -55,19 +64,29 @@ class Player:
         self.points += amount
 
     def deduct_points(self, amount: int) -> bool:
-        """Returns False if player goes bankrupt."""
+        """Subtract `amount`. Going below 0 triggers bankruptcy UNLESS the
+        player is in the post-bankruptcy immunity window — in that case the
+        wallet just clamps at 0 (no second reset). Returns False if a real
+        bankruptcy fired."""
         self.points -= amount
         if self.points < 0:
+            if self.bankrupt_immune > 0:
+                self.points = 0
+                from game.log import gprint
+                gprint(f"  🛡️ {self.name} would have bankrupted but is in "
+                       f"recovery — wallet clamped to 0.")
+                return False
             self.go_bankrupt()
             return False
         return True
 
     def go_bankrupt(self):
-        """Bankruptcy sends the player back to the start (tile 0) and
-        wipes their wallet — a heavy economic + positional penalty."""
+        """Bankruptcy resets the player to tile 0 with zero points and starts
+        a short immunity window (so a single bad spot can't loop reset)."""
         self.position = 0
         self.points = 0
         self.bankrupt_count += 1
+        self.bankrupt_immune = BANKRUPT_IMMUNITY_TURNS
         from game.log import gprint
         gprint(f"  [BANKRUPT] {self.name} went bankrupt — back to tile 0!")
 

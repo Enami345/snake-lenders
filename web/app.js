@@ -2177,9 +2177,11 @@ async function animateTokenMove(moverId, from, landing, final, opts = {}) {
   }
 
   if (opts.bankrupt) {
-    // Bankruptcy only comes from a bomb now: blast, then spin back to tile 0.
-    triggerFloatingNumber(landing, "💥 BOMB!", false);
-    await queueAndWait({ type: "bomb_explode", playerId: moverId, tile: landing });
+    // Bankruptcy can come from a bomb OR a snake-bite point steal.
+    if (opts.bomb) {
+      triggerFloatingNumber(landing, "💥 BOMB!", false);
+      await queueAndWait({ type: "bomb_explode", playerId: moverId, tile: landing });
+    }
     triggerFloatingNumber(landing, "☠️ BANKRUPT!", false);
     await queueAndWait({ type: "bankrupt_spin", playerId: moverId, startTile: landing });
     mover.position = 0;
@@ -2233,6 +2235,19 @@ async function executeTurn() {
   (res.logs || []).forEach(line => appendLog(line));
   applyServerState(res.state);
   renderGameScreen();
+
+  // Snake point-theft floats + SFX (parse "💸 snake H robs N pts from A → B").
+  (res.logs || []).forEach(line => {
+    if (!line.includes("💸")) return;
+    const m = line.match(/robs\s+(\d+)\s+pts\s+from\s+(.+?)\s*[→\-]>?\s*(.+)$/);
+    if (!m) return;
+    const amt = +m[1];
+    const v = gameSession.players.find(p => p.name.trim() === m[2].trim());
+    const o = gameSession.players.find(p => p.name.trim() === m[3].trim());
+    if (v && v.position > 0) triggerFloatingNumber(v.position, `−${amt}`, false);
+    if (o && o.position > 0) triggerFloatingNumber(o.position, `+${amt}`, true);
+    playSFX("steal");
+  });
 
   if (res.winner) {
     const wp = gameSession.players.find(p => p.name === res.winner)
