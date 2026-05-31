@@ -38,13 +38,13 @@
       <div class="menu-buttons">
         <button id="btn-play-lobby" class="btn-premium btn-large animate-pulse">
           <span class="btn-shine"></span>
-          🎮 START GAME
+          START GAME
         </button>
         <button id="btn-open-rules" class="btn-premium btn-secondary btn-large">
-          📖 HOW TO PLAY
+          HOW TO PLAY
         </button>
         <button id="btn-open-settings" class="btn-premium btn-secondary btn-large">
-          ⚙️ SETTINGS
+          SETTINGS
         </button>
       </div>
 
@@ -58,12 +58,12 @@
   <!-- ── SCREEN 2: LOBBY / SETUP SCREEN ── -->
   <section id="screen-lobby" class="screen hidden">
     <div class="lobby-content glassmorphism">
-      <h2 class="section-title">🎲 Setup Board &amp; Players</h2>
+      <h2 class="section-title">Setup Board &amp; Players</h2>
       
       <div class="lobby-grid">
         <!-- Player Slots Configuration -->
         <div class="lobby-section players-config">
-          <h3>👥 Players (1 - 4)</h3>
+          <h3>Players (1 - 4)</h3>
           <div class="players-selector">
             <label class="config-label">Total Players
               <select id="select-players" class="lobby-select">
@@ -81,7 +81,7 @@
 
         <!-- Custom Settings/Seed Card -->
         <div class="lobby-section setup-details">
-          <h3>⚙️ Board Seed &amp; Previews</h3>
+          <h3>Board Seed &amp; Previews</h3>
           
           <div class="seed-input-wrap">
             <label class="config-label">Game Seed (Optional)
@@ -101,7 +101,7 @@
           </div>
 
           <div class="rules-quickstart">
-            <h4>💡 Quick Rules Card</h4>
+            <h4>Quick Rules</h4>
             <ul>
               <li><strong>Exact Win:</strong> Stay put if you overshoot tile 100.</li>
               <li><strong>Economy:</strong> Single-use traps cost more per purchase.</li>
@@ -113,8 +113,8 @@
       </div>
 
       <div class="lobby-actions">
-        <button id="btn-lobby-back" class="btn-premium btn-secondary">🔙 Main Menu</button>
-        <button id="btn-lobby-start" class="btn-premium btn-glow btn-large">🚀 LAUNCH GAME</button>
+        <button id="btn-lobby-back" class="btn-premium btn-secondary">Back</button>
+        <button id="btn-lobby-start" class="btn-premium btn-glow btn-large">LAUNCH GAME</button>
       </div>
     </div>
   </section>
@@ -134,7 +134,7 @@
         <!-- Float Actions Bar under the board -->
         <div class="board-actions-bar glassmorphism">
           <div class="emote-system">
-            <span class="bar-label">💬 React:</span>
+            <span class="bar-label">React:</span>
             <div class="emote-bar">
               <button class="btn-emote" data-emote="laughing" title="Laughing">😂</button>
               <button class="btn-emote" data-emote="crying" title="Crying">😭</button>
@@ -145,8 +145,8 @@
             </div>
           </div>
           
-          <button id="btn-open-ingame-settings" class="btn-premium btn-secondary btn-small">⚙️ Settings</button>
-          <button id="btn-game-quit" class="btn-premium btn-danger btn-small">🏳️ Resign</button>
+          <button id="btn-open-ingame-settings" class="btn-premium btn-secondary btn-small">Settings</button>
+          <button id="btn-game-quit" class="btn-premium btn-danger btn-small">Resign</button>
         </div>
       </div>
 
@@ -170,7 +170,7 @@
 
         <!-- Glassmorphic Player Cards Container -->
         <div class="sidebar-section">
-          <h3>🏆 Standings &amp; Sabotages</h3>
+          <h3>Standings</h3>
           <div id="players-cards" class="players-cards-container">
             <!-- Dynamic stats cards rendered here -->
           </div>
@@ -180,17 +180,17 @@
         <div class="sidebar-section action-hub glassmorphism">
           <div id="thinking-indicator" class="thinking-indicator hidden">
             <div class="thinking-spinner"></div>
-            <span>🤖 AI is thinking...</span>
+            <span>AI is thinking...</span>
           </div>
 
           <!-- HUMAN SHOP CARD (Dynamic visibility) -->
           <div id="shop-panel" class="shop-panel hidden">
-            <h4 class="shop-title">🐍 Snake Shop</h4>
+            <h4 class="shop-title">Snake Shop</h4>
             <!-- hidden inputs hold the chosen head/tail from board clicks -->
             <input type="hidden" id="input-shop-head" />
             <input type="hidden" id="input-shop-tail" />
 
-            <button id="btn-shop-place" class="btn-premium btn-glow btn-small w-100">🎯 Place a Snake</button>
+            <button id="btn-shop-place" class="btn-premium btn-glow btn-small w-100">Place a Snake</button>
             <div id="shop-instruction" class="shop-instruction"></div>
             <div id="shop-feedback" class="shop-feedback-message"></div>
           </div>
@@ -210,14 +210,14 @@
             </div>
             
             <button id="btn-action-roll" class="btn-premium btn-large btn-glow btn-dice-roll">
-              🎲 ROLL DICE
+              ROLL DICE
             </button>
           </div>
         </div>
 
         <!-- Moving logs -->
         <div class="sidebar-section log-hub glassmorphism">
-          <h3>📜 Battle Log</h3>
+          <h3>Battle Log</h3>
           <div id="battle-log-lines" class="log-lines"></div>
         </div>
 
@@ -236,17 +236,17 @@
       <p class="winner-congrats">Is the ultimate Snakes &amp; Lenders Champion!</p>
 
       <div class="victory-details">
-        <h3>📊 Match Overview</h3>
+      <h3>Match Overview</h3>
         <div id="victory-stats-grid" class="victory-grid">
           <!-- Dynamic cards showing counts of snakes, bankruptcy, climbs etc -->
         </div>
       </div>
 
       <div class="victory-buttons">
-        <button id="btn-victory-replay" class="btn-premium w-100 animate-pulse">📺 WATCH MATCH REPLAY (2x)</button>
+        <button id="btn-victory-replay" class="btn-premium w-100 animate-pulse">WATCH MATCH REPLAY (2x)</button>
         <div class="victory-bottom-row mt-2">
-          <button id="btn-victory-lobby" class="btn-premium btn-secondary btn-small">🆕 Setup Lobby</button>
-          <button id="btn-victory-menu" class="btn-premium btn-secondary btn-small">🏠 Main Menu</button>
+          <button id="btn-victory-lobby" class="btn-premium btn-secondary btn-small">Setup Lobby</button>
+          <button id="btn-victory-menu" class="btn-premium btn-secondary btn-small">Main Menu</button>
         </div>
       </div>
     </div>
@@ -256,7 +256,7 @@
   <div id="modal-settings" class="modal hidden">
     <div class="modal-content glassmorphism">
       <div class="modal-header">
-        <h2>⚙️ Game Configuration</h2>
+        <h2>Game Configuration</h2>
         <span class="btn-modal-close" id="btn-close-settings">&times;</span>
       </div>
       
@@ -264,7 +264,7 @@
         
         <!-- Audio Config -->
         <div class="settings-group">
-          <h3>🔊 Audio Engine</h3>
+          <h3>Audio Engine</h3>
           <div class="setting-item">
             <label>Master SFX Volume <span id="label-vol-sfx">80%</span>
               <input type="range" id="slider-vol-sfx" min="0" max="100" value="80" class="slider" />
@@ -286,7 +286,7 @@
 
         <!-- Animation Config -->
         <div class="settings-group">
-          <h3>⚡ Animations &amp; Speeds</h3>
+          <h3>Animations &amp; Speeds</h3>
           <div class="setting-item">
             <label>Master Play Speed
               <select id="select-anim-speed" class="lobby-select">
@@ -327,7 +327,7 @@
 
         <!-- AI and Mechanics -->
         <div class="settings-group">
-          <h3>🤖 AI &amp; Shop Helpers</h3>
+          <h3>AI &amp; Shop Helpers</h3>
           <div class="setting-item flex-row">
             <span>Automatic AI Emotes</span>
             <label class="switch">
@@ -364,22 +364,22 @@
   <div id="modal-rules" class="modal hidden">
     <div class="modal-content glassmorphism modal-medium">
       <div class="modal-header">
-        <h2>🐍 How to Play Snakes &amp; Lenders</h2>
+        <h2>How to Play Snakes &amp; Lenders</h2>
         <span class="btn-modal-close" id="btn-close-rules">&times;</span>
       </div>
       
       <div class="modal-body rules-body text-scroll">
-        <h3>🎯 The Core Objective</h3>
+        <h3>The Core Objective</h3>
         <p>
           Be the first player to land <strong>exactly</strong> on tile 100. If your roll would overshoot 100, the move is invalid and you stay put.
         </p>
 
-        <h3>💰 Economy &amp; Income</h3>
+        <h3>Economy &amp; Income</h3>
         <p>
           Unlike classic luck-based games, you earn points by moving across tiles (deeper tiles give more points). You spend this precious currency in the <strong>Snake Shop</strong> to place tactical traps. Income is scarce, so timing and budget management are key!
         </p>
 
-        <h3>🛒 The Snake Shop</h3>
+        <h3>The Snake Shop</h3>
         <p>
           During the start of your turn, if you are on the board, you can buy a snake:
         </p>
@@ -390,7 +390,7 @@
           <li><strong>Anti-Wall:</strong> You cannot place a snake that would extend a consecutive run of adjacent snake heads past 2.</li>
         </ul>
 
-        <h3>🐍 Snake Bites &amp; Immunity</h3>
+        <h3>Snake Bites &amp; Immunity</h3>
         <ul>
           <li>Snakes bite only when you land <strong>exactly on the head tile</strong>. Landing below it or jumping clean over is safe.</li>
           <li><strong>Immunity:</strong> you are 100% immune to your own traps.</li>
@@ -398,15 +398,15 @@
           <li>Once a player snake bites, it is <strong>consumed</strong> and removed from the board.</li>
         </ul>
 
-        <h3>💣 Bombs &amp; Bankruptcy</h3>
+        <h3>Bombs &amp; Bankruptcy</h3>
         <p>
           There are 5 fixed bomb tiles on the board. Landing on one inflicts a heavy depth-scaled point penalty. If your wallet goes below 0, you go **BANKRUPT**!
         </p>
         <p class="highlight-danger">
-          <strong>☠️ BANKRUPTCY RESETS YOU TO TILE 0 WITH ZERO POINTS!</strong> Use safety cushions!
+          <strong>BANKRUPTCY RESETS YOU TO TILE 0 WITH ZERO POINTS!</strong> Use safety cushions!
         </p>
 
-        <h3>🤖 AI Opponents</h3>
+        <h3>AI Opponents</h3>
         <ul>
           <li><strong>Easy (Expectimax):</strong> deliberate weak heuristic, reacts late, hoards points, only buys short cheap traps.</li>
           <li><strong>Hard (PPO Neural Network):</strong> trained via reinforcement learning self-play, places catch-optimal traps, parks win-denials near the finish line, manages points aggressively.</li>
@@ -419,7 +419,7 @@
   <div id="modal-snake-confirm" class="modal hidden">
     <div class="modal-content glassmorphism modal-small">
       <div class="modal-header">
-        <h2>🐍 Confirm Snake</h2>
+        <h2>Confirm Snake</h2>
         <span class="btn-modal-close" id="btn-snake-cancel">&times;</span>
       </div>
       <div class="modal-body">
@@ -431,8 +431,8 @@
           <div><span>Points after</span><strong id="confirm-snake-after">— pts</strong></div>
         </div>
         <div class="confirm-snake-actions">
-          <button id="btn-snake-confirm" class="btn-premium btn-glow w-100">✅ Buy &amp; Place</button>
-          <button id="btn-snake-back" class="btn-premium btn-secondary w-100">↩️ Pick again</button>
+          <button id="btn-snake-confirm" class="btn-premium btn-glow w-100">Buy &amp; Place</button>
+          <button id="btn-snake-back" class="btn-premium btn-secondary w-100">Pick again</button>
         </div>
       </div>
     </div>
