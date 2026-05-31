@@ -15,15 +15,15 @@ import random
 
 from ai.expectimax import (find_best_snake_to_buy, expectimax_decision,
                            strong_decision, propose_cheap_trap,
-                           propose_big_snake, propose_lurk)
+                           propose_big_snake, propose_lurk, propose_combo)
 
-# PPO action space — the policy picks a STRATEGY each turn (this is what
-# gives Hard a real edge over Easy's single fixed heuristic):
-#   0 = roll only (bank points)
-#   1 = cheap short trap just ahead of the leader
+# PPO action space — the policy picks a STRATEGY each turn:
+#   0 = roll only (bank points / be patient)
+#   1 = cheap short trap just ahead of the leader (cheap pressure)
 #   2 = save up & drop the longest affordable snake (max knockback)
 #   3 = win-denial lurk snake near the goal (tiles 85-90)
-N_ACTIONS = 4
+#   4 = COMBO: snake whose tail is a bomb tile (knockback + bomb damage)
+N_ACTIONS = 5
 
 
 def _action_to_shop(board, player, action):
@@ -34,6 +34,8 @@ def _action_to_shop(board, player, action):
         return propose_big_snake(board, player)
     if action == 3:
         return propose_lurk(board, player)
+    if action == 4:
+        return propose_combo(board, player)
     return None
 
 # Path where the trained model is saved/loaded. BACKUP_PATH is a stable
@@ -47,56 +49,82 @@ BACKUP_PATH = "ai/ppo_model_backup.zip"
 
 def encode_state(board: BoardState, player: Player) -> np.ndarray:
     """
-    Convert the full board state into a flat numeric vector
-    that the PPO neural network can read.
+    Convert the full board state into a flat 22-dim vector the PPO net reads.
 
-    Vector layout (total: 14 values):
-    [0]     Our position (normalized 0-1)
-    [1]     Our points (normalized, capped at 2000)
-    [2]     Our snake count (0-3)
-    [3-5]   Opponent positions (up to 3 opponents, normalized)
-    [6-8]   Opponent points (normalized)
-    [9]     Number of snakes ahead of nearest opponent
-    [10]    Cost of best available snake (normalized)
-    [11]    ROI of best available snake (normalized)
-    [12]    Turns played (normalized, capped at 100)
-    [13]    Can we afford a snake? (0 or 1)
+    Layout (22 values):
+    [0]      our position / 100
+    [1]      our points / 2000 (cap)
+    [2]      our snake count / 3
+    [3-5]    opponent positions / 100 (up to 3)
+    [6-8]    opponent points / 2000
+    [9-11]   opponent snake counts / 3
+    [12]     snakes ahead of the LEADING opponent / 10
+    [13]     nearest bomb ahead of us, distance / 20 (1 if none)
+    [14]     nearest ladder bottom ahead of us, distance / 20 (1 if none)
+    [15]     best available snake cost / 1000
+    [16]     best available snake damage / 100 (clamped -1..1)
+    [17]     can we afford the best snake? (0/1)
+    [18]     is a COMBO snake (tail on a bomb) available? (0/1)
+    [19]     are we in post-bankruptcy immunity? (0/1)
+    [20]     leading opponent's distance to goal / 100
+    [21]     turn / 100
     """
-    state = np.zeros(14, dtype=np.float32)
-
-    # Our info
+    state = np.zeros(22, dtype=np.float32)
     state[0] = player.position / 100.0
     state[1] = min(player.points / 2000.0, 1.0)
     state[2] = player.snake_count / 3.0
 
-    # Opponent info (up to 3 opponents)
     opponents = [p for p in board.players if p.player_id != player.player_id]
     for i, opp in enumerate(opponents[:3]):
         state[3 + i] = opp.position / 100.0
         state[6 + i] = min(opp.points / 2000.0, 1.0)
+        state[9 + i] = opp.snake_count / 3.0
 
-    # Snakes ahead of nearest opponent
     if opponents:
-        nearest_opp = min(opponents, key=lambda p: abs(p.position - player.position))
-        snakes_ahead = sum(
-            1 for s in board.snakes
-            if s.head > nearest_opp.position
-        )
-        state[9] = min(snakes_ahead / 10.0, 1.0)
+        leader = max(opponents, key=lambda p: p.position)
+        snakes_ahead = sum(1 for s in board.snakes if s.head > leader.position)
+        state[12] = min(snakes_ahead / 10.0, 1.0)
+        state[20] = max(0.0, (100 - leader.position) / 100.0)
 
-    # Best snake info
+    bombs_ahead = [b for b in board.bombs if b > player.position]
+    state[13] = min((min(bombs_ahead) - player.position) / 20.0, 1.0) if bombs_ahead else 1.0
+    ladders_ahead = [l.bottom for l in board.ladders if l.bottom > player.position]
+    state[14] = min((min(ladders_ahead) - player.position) / 20.0, 1.0) if ladders_ahead else 1.0
+
     best = find_best_snake_to_buy(board, player)
     if best:
-        head, tail, roi = best
+        head, tail, dmg = best
         cost = calculate_snake_cost(player, head, tail)
-        state[10] = min(cost / 1000.0, 1.0)
-        state[11] = min(max(roi / 100.0, -1.0), 1.0)
-        state[13] = 1.0 if player.points >= cost else 0.0
+        state[15] = min(cost / 1000.0, 1.0)
+        state[16] = min(max(dmg / 100.0, -1.0), 1.0)
+        state[17] = 1.0 if player.points >= cost else 0.0
 
-    # Turn number
-    state[12] = min(board.turn_number / 100.0, 1.0)
-
+    state[18] = 1.0 if propose_combo(board, player) else 0.0
+    state[19] = 1.0 if getattr(player, "bankrupt_immune", 0) > 0 else 0.0
+    state[21] = min(board.turn_number / 100.0, 1.0)
     return state
+
+
+def _obs_for_model(obs: np.ndarray, model) -> np.ndarray:
+    """Adapt an observation to the size expected by a loaded PPO model.
+
+    This keeps older saved models usable when the live encoder grows new
+    trailing features.
+    """
+    expected_shape = getattr(getattr(model, "observation_space", None), "shape", None)
+    if not expected_shape:
+        return obs
+
+    expected_size = int(np.prod(expected_shape))
+    obs = np.asarray(obs, dtype=np.float32).reshape(-1)
+    if obs.size == expected_size:
+        return obs
+    if obs.size > expected_size:
+        return obs[:expected_size]
+
+    padded = np.zeros(expected_size, dtype=np.float32)
+    padded[:obs.size] = obs
+    return padded
 
 
 # ── PPO Training Environment ───────────────────────────────────────────────────
@@ -150,7 +178,7 @@ def build_training_env(opponent_pool=False):
             super().__init__()
             self.action_space = spaces.Discrete(N_ACTIONS)
             self.observation_space = spaces.Box(
-                low=0.0, high=1.0, shape=(14,), dtype=np.float32
+                low=0.0, high=1.0, shape=(22,), dtype=np.float32
             )
             self.board = None
             self.ai_player = None
@@ -190,6 +218,12 @@ def build_training_env(opponent_pool=False):
             result = do_turn(self.board, shop_decision=shop_decision)
             self.turn_count += 1
             agent_bought = bool(result.get("bought"))
+            placed_setback = (shop_decision["head"] - shop_decision["tail"]
+                              if (agent_bought and shop_decision) else 0)
+            # Combo = bought snake whose tail sits on a bomb tile.
+            placed_combo = bool(
+                agent_bought and shop_decision
+                and shop_decision["tail"] in self.board.bombs)
             winner       = result["winner"]
 
             # ── 2. Opponents' turns (their own Expectimax) ───────────
@@ -210,32 +244,41 @@ def build_training_env(opponent_pool=False):
 
             went_bankrupt = self.ai_player.bankrupt_count > start_bankrupts
             reward = self._compute_reward(
-                winner, agent_bought, start_pos, went_bankrupt, opp_setback)
+                winner, agent_bought, start_pos, went_bankrupt,
+                opp_setback, placed_setback, placed_combo)
 
             obs = encode_state(self.board, self.ai_player)
             return obs, reward, terminated, truncated, {}
 
         def _compute_reward(self, winner, agent_bought, start_pos,
-                            went_bankrupt, opp_setback) -> float:
+                            went_bankrupt, opp_setback, placed_setback,
+                            placed_combo) -> float:
             """
-            Win/loss dominates. Shaping is small and bounded: progress delta
-            (not absolute position) plus a reward for setting opponents back,
-            so the policy learns that effective sabotage is worth the spend.
+            Win/loss dominates, but we deliberately shape toward CUNNING,
+            aggressive play so the policy actually deploys traps (the
+            exact-head rule otherwise makes passivity near-optimal). We reward
+            setting opponents back, reward placing snakes (scaled by their
+            knockback), and give a big bonus for COMBOs (snake tail on a
+            bomb tile). Anti-hoard: if we sat on plenty of points and didn't
+            even try, take a small penalty.
             """
             if winner is not None:
                 return 100.0 if winner.player_id == self.ai_player.player_id else -100.0
 
             reward = 0.0
-            # Progress delta toward tile 100 (negative if snake-bitten back)
-            reward += (self.ai_player.position - start_pos) * 0.1
-            # Reward setting opponents back (sabotage paying off)
-            reward += opp_setback * 0.15
-            # Real bankruptcy this round (bomb wiped the wallet → reset)
+            reward += (self.ai_player.position - start_pos) * 0.1   # progress
+            reward += opp_setback * 0.4                             # sabotage paying off (heavier)
             if went_bankrupt:
                 reward -= 50.0
-            # Tiny nudge for actually placing a trap
             if agent_bought:
-                reward += 2.0
+                reward += 4.0 + placed_setback * 0.25               # bigger trap = more
+                if placed_combo:                                    # tail-on-bomb COMBO
+                    reward += 8.0
+            else:
+                # Anti-hoard: rich and didn't even try → small penalty so the
+                # policy doesn't just sit on a pile of points all game.
+                if self.ai_player.points > 100:
+                    reward -= 0.5
             return reward
 
     return SnakesLendersEnv
@@ -271,14 +314,16 @@ def train_ppo(total_timesteps: int = 100_000, opponent_pool: bool = False,
     vec_env = make_vec_env(EnvClass, n_envs=4)
 
     model = PPO(
-        policy="MlpPolicy",     # Multi-layer perceptron neural network
+        policy="MlpPolicy",
         env=vec_env,
-        learning_rate=3e-4,     # Standard PPO learning rate
-        n_steps=2048,           # Steps before each policy update
+        learning_rate=3e-4,
+        n_steps=2048,
         batch_size=64,
-        n_epochs=10,            # PPO epochs per update
-        gamma=0.99,             # Discount factor (values future rewards)
-        clip_range=0.2,         # The PPO clipping value — keeps updates stable
+        n_epochs=10,
+        gamma=0.99,
+        clip_range=0.2,
+        ent_coef=0.02,          # entropy bonus → keeps the policy varied (unpredictable)
+        device="cpu",          # MLP PPO + Python-heavy env is typically faster on CPU.
         verbose=1,
     )
 
@@ -338,8 +383,10 @@ def ppo_decision(board: BoardState, player: Player, model) -> dict | None:
     """
     if not player.can_buy_snake:
         return None
-    obs = encode_state(board, player)
-    action, _ = model.predict(obs, deterministic=True)
+    obs = _obs_for_model(encode_state(board, player), model)
+    # Stochastic sampling at inference → unpredictable cunning play
+    # (varies between saving, cheap pressure, big knockbacks, lurks, combos).
+    action, _ = model.predict(obs, deterministic=False)
 
     shop = _action_to_shop(board, player, int(action))
     if shop:

@@ -9,6 +9,9 @@ Run from the project root:
 import os
 import sys
 import unittest
+from types import SimpleNamespace
+
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -17,6 +20,7 @@ from game.board import (generate_board, bfs_expected_turns,
                         NUM_LADDERS, NUM_INIT_SNAKES, NUM_BOMBS, MIN_AVG_TURNS)
 from game.engine import (move_player, calculate_snake_cost, can_place_snake,
                          MAX_SNAKE_HEAD, MIN_SNAKE_COST, STRIKE_ZONE)
+from ai.ppo_agent import _obs_for_model
 
 
 def _board(snakes=None, ladders=None, bombs=None, players=None, tiles=None):
@@ -140,6 +144,27 @@ class TestBankruptcy(unittest.TestCase):
         self.assertEqual(p.position, 0)      # reset to start
         self.assertEqual(p.points, 0)
         self.assertEqual(p.bankrupt_count, 1)
+
+
+class TestPPOObservationAdapter(unittest.TestCase):
+    def test_truncates_to_model_size(self):
+        obs = np.arange(22, dtype=np.float32)
+        model = SimpleNamespace(observation_space=SimpleNamespace(shape=(14,)))
+
+        adapted = _obs_for_model(obs, model)
+
+        self.assertEqual(adapted.shape, (14,))
+        np.testing.assert_array_equal(adapted, np.arange(14, dtype=np.float32))
+
+    def test_pads_short_observations(self):
+        obs = np.arange(14, dtype=np.float32)
+        model = SimpleNamespace(observation_space=SimpleNamespace(shape=(22,)))
+
+        adapted = _obs_for_model(obs, model)
+
+        self.assertEqual(adapted.shape, (22,))
+        np.testing.assert_array_equal(adapted[:14], obs)
+        np.testing.assert_array_equal(adapted[14:], np.zeros(8, dtype=np.float32))
 
 
 if __name__ == "__main__":
