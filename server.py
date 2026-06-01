@@ -232,10 +232,12 @@ def serve_static(path):
     return send_from_directory("web", path)
 
 
-def run_server_flask(port=5000):
+def run_server_flask(port=None):
+    port = port or int(os.environ.get("PORT", 5000))
     print(f"[Web] Snakes & Lenders on http://localhost:{port}")
     app.run(host="0.0.0.0", port=port, debug=False)
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
