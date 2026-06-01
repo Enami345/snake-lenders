@@ -97,7 +97,6 @@
               <!-- Re-generated visual thumbnail before launch -->
               <div class="preview-placeholder">Click 'Generate Seed' for a custom board</div>
             </div>
-            <button id="btn-preview-board" class="btn-premium btn-secondary btn-small w-100 mt-2">🔁 Preview Seed Board</button>
           </div>
 
           <div class="rules-quickstart">
@@ -124,10 +123,10 @@
     <div class="game-layout">
       
       <!-- GAMEPLAY BOARD WRAPPER -->
-      <div class="board-container">
+        <div class="board-container">
         <div class="board-frame glassmorphism">
           <!-- HTML5 Canvas for ultra high fidelity rendering -->
-          <canvas id="game-canvas" width="750" height="750"></canvas>
+          <canvas id="game-canvas" width="1400" height="1400"></canvas>
           <div id="canvas-overlay-container" class="canvas-overlays"></div>
         </div>
 
@@ -223,6 +222,29 @@
 
       </aside>
 
+    </div>
+
+    <!-- Full-width Replay Bar (moved here so it spans the layout) -->
+    <div id="replay-overlay" class="replay-overlay hidden">
+      <div class="replay-panel glassmorphism">
+        <div class="replay-header">
+          <div style="display:flex; gap:12px; align-items:center;">
+            <strong>Match Replay</strong>
+            <div id="replay-progress-text" class="replay-progress-text">Turn 0 / 0</div>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <div class="replay-speed-controls">
+              <button type="button" class="btn-premium btn-small replay-speed-btn" data-speed="1">1x</button>
+              <button type="button" class="btn-premium btn-small replay-speed-btn" data-speed="2">2x</button>
+              <button type="button" class="btn-premium btn-small replay-speed-btn" data-speed="3">3x</button>
+            </div>
+            <button id="btn-replay-skip" class="btn-premium btn-secondary btn-small">Skip</button>
+          </div>
+        </div>
+        <div class="replay-progress">
+          <div class="replay-progress-bar"><div id="replay-progress-fill" class="replay-progress-fill"></div></div>
+        </div>
+      </div>
     </div>
   </section>
 

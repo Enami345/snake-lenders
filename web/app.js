@@ -56,6 +56,11 @@ let comboPopups = [];
 let boardShakeOffset = { x: 0, y: 0 };
 let currentHoveredTile = null;
 let boardResizeObserver = null;
+let currentScreen = "menu";
+let hasUserGesture = false;
+let replayActive = false;
+let replaySpeedFactor = 1;
+let replayEventIndex = 0;
 
 // ── Chess-style snake placement state ──
 let placement = { active: false, head: null, validHeads: new Set(), validTails: new Set() };
@@ -118,6 +123,28 @@ function saveSettings() {
   localStorage.setItem("snakes_lenders_settings", JSON.stringify(settings));
 }
 
+function setupAudioAutoplayUnlock() {
+  const unlockAudio = () => {
+    if (hasUserGesture) return;
+    hasUserGesture = true;
+    if (!audioCtx) initAudio();
+    if (audioCtx) {
+      if (audioCtx.state === "suspended") {
+        audioCtx.resume().then(() => {
+          if (settings.bgmEnabled) playBGMForScene(currentScreen);
+        }).catch(() => {
+          if (settings.bgmEnabled) playBGMForScene(currentScreen);
+        });
+      } else {
+        if (settings.bgmEnabled) playBGMForScene(currentScreen);
+      }
+    }
+  };
+  ["pointerdown", "keydown", "touchstart"].forEach((eventName) => {
+    document.addEventListener(eventName, unlockAudio, { once: true, passive: true });
+  });
+}
+
 // ── PROCEDURAL WEB AUDIO SYNTH ENGINE ──
 let audioCtx = null;
 
@@ -130,10 +157,6 @@ function initAudio() {
   if (audioCtx) return;
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   audioCtx = new AudioContextClass();
-  
-  if (settings.bgmEnabled) {
-    startBGM();
-  }
 }
 
 // Procedural sound effects using Web Audio API nodes
@@ -719,18 +742,23 @@ const api = async (path, body) => {
 
 // ── SCREEN ROUTER / INITIALIZATION ──
 function showScreen(screenId) {
+  currentScreen = screenId;
   document.querySelectorAll(".screen").forEach(s => s.classList.add("hidden"));
   $(`screen-${screenId}`).classList.remove("hidden");
 
+  if (!audioCtx && hasUserGesture) {
+    initAudio();
+  }
+
   // Music scene switching
   if (screenId === "menu") {
-    playBGMForScene("menu");
+    if (audioCtx && (hasUserGesture || audioCtx.state !== "suspended")) playBGMForScene("menu");
     $("main-menu-bg").classList.remove("hidden");
   } else if (screenId === "lobby") {
-    playBGMForScene("lobby");
+    if (audioCtx && (hasUserGesture || audioCtx.state !== "suspended")) playBGMForScene("lobby");
     $("main-menu-bg").classList.add("hidden");
   } else if (screenId === "game") {
-    playBGMForScene("game");
+    if (audioCtx && (hasUserGesture || audioCtx.state !== "suspended")) playBGMForScene("game");
     $("main-menu-bg").classList.add("hidden");
   } else {
     $("main-menu-bg").classList.add("hidden");
@@ -776,8 +804,8 @@ function renderLobbySlots() {
       <div class="slot-type">
         <select id="slot-type-${i}" class="lobby-select w-100">
           <option value="human" ${defaultType === 'human' ? 'selected' : ''}>👤 Human</option>
-        <option value="easy" ${defaultType === 'easy' ? 'selected' : ''}>Easy AI</option>
-        <option value="hard" ${defaultType === 'hard' ? 'selected' : ''}>Hard AI</option>
+        <option value="easy" ${defaultType === 'easy' ? 'selected' : ''}>😊 Easy AI</option>
+        <option value="hard" ${defaultType === 'hard' ? 'selected' : ''}>😈 Hard AI</option>
         </select>
       </div>
       <div class="slot-color">
@@ -874,10 +902,7 @@ $("btn-randomize-seed").addEventListener("click", () => {
   generateLobbyPreview();
 });
 
-$("btn-preview-board").addEventListener("click", () => {
-  playSFX("click");
-  generateLobbyPreview();
-});
+// 'Preview Seed Board' button removed from UI — preview updates automatically on seed change
 
 $("btn-lobby-back").addEventListener("click", () => {
   showScreen("menu");
@@ -954,7 +979,9 @@ $("btn-lobby-start").addEventListener("click", async () => {
       winner: null,
       seed: seed,
       stats: {},
-      actionHistory: []
+      actionHistory: [],
+      replayHistory: [],
+      replayInitialState: null
     };
 
     // Client-only per-player stats (gameplay rules live on the server).
@@ -986,7 +1013,11 @@ $("btn-lobby-start").addEventListener("click", async () => {
     renderGameScreen();
     setupBoardResizeObserver();
     startDrawLoop();
-    
+
+    gameSession.replayInitialState = cloneReplayState(gameSession);
+    gameSession.replayHistory = [];
+    gameSession.replayWinner = gameSession.winner || null;
+    replaySpeedFactor = 2;
     // If first player is an AI, trigger AI loop
     checkAndExecuteAITurn();
 
@@ -1013,32 +1044,36 @@ function setupBoardResizeObserver() {
   const recalcBoardSize = () => {
     const gameLayout = document.querySelector('.game-layout');
     if (!gameLayout) return;
-    
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    
-    // On narrow screens (stacked layout), board is above sidebar
-    const isStacked = viewportWidth <= 900;
-    const isShortScreen = viewportHeight <= 600;
-    
-    let availableWidth, availableHeight;
-    
-    if (isStacked) {
-      // Stacked: full width minus padding, height leaves room for controls
-      availableWidth = viewportWidth - 32;
-      availableHeight = isShortScreen ? viewportHeight - 100 : viewportHeight - 280;
-    } else {
-      // Side-by-side: width minus sidebar, height minus action bar
-      const sidebarWidth = sidebar ? 340 : 0;
-      availableWidth = viewportWidth - sidebarWidth - 60;
-      availableHeight = isShortScreen ? viewportHeight - 120 : viewportHeight - 200;
-    }
-    
-    // Board is a perfect square: use the smaller dimension, capped at 750
-    const boardSize = Math.max(200, Math.min(750, Math.min(availableWidth, availableHeight)));
-    
+
+    // Measure actual layout and container sizes so calculations match rendered space
+    const layoutRect = gameLayout.getBoundingClientRect();
+    const boardContainerRect = boardContainer ? boardContainer.getBoundingClientRect() : { width: layoutRect.width, height: layoutRect.height };
+    const sidebarWidth = sidebar ? (sidebar.getBoundingClientRect().width || 0) : 0;
+    const gap = parseFloat(getComputedStyle(gameLayout).gap) || 20;
+
+    // Find actions bar height (the floating controls under the board)
+    const actionsBar = boardContainer ? boardContainer.querySelector('.board-actions-bar') : null;
+    const actionsHeight = actionsBar ? actionsBar.getBoundingClientRect().height : 0;
+
+    // Available width should be the layout width minus sidebar and gap (for side-by-side),
+    // or the full layout width for stacked/mobile
+    const isStacked = window.innerWidth <= 900;
+    let availableWidth = isStacked ? layoutRect.width - 32 : Math.max(300, layoutRect.width - sidebarWidth - gap - 24);
+
+    // Available height comes from the layout height minus the actions bar and a small safety margin
+    const safetyMargin = 24; // leave room for paddings and spacing
+    let availableHeight = layoutRect.height - actionsHeight - safetyMargin;
+
+    // Board is square: take the smaller of the two available dimensions and cap
+    const boardSize = Math.max(300, Math.min(1400, Math.min(availableWidth, availableHeight)));
+
     boardFrame.style.width = `${boardSize}px`;
     boardFrame.style.height = `${boardSize}px`;
+    // Update canvas internal resolution to match
+    if (canvas) {
+      canvas.width = boardSize;
+      canvas.height = boardSize;
+    }
     
     // Update canvas internal resolution to match
     if (canvas) {
@@ -1813,7 +1848,7 @@ async function processAnimationQueue() {
 }
 
 function runAnimation(anim) {
-  const speedMult = getSpeedMultiplier();
+  const speedMult = getSpeedMultiplier() * replaySpeedFactor;
   
   return new Promise((resolve) => {
     const player = gameSession.players.find(p => p.id === anim.playerId);
@@ -1982,6 +2017,7 @@ function runAnimation(anim) {
 
 // Hop animation: squash and stretch bounce steps
 function animateSingleHop(player, startTile, endTile, durationMs) {
+  if (replayActive) durationMs = durationMs / replaySpeedFactor;
   const start = tileCenter(startTile);
   const end = tileCenter(endTile);
   
@@ -2030,7 +2066,7 @@ function trigger3DDiceRoll(rollValue) {
     // Apply spin CSS class
     diceCube.className = "dice-cube dice-tumbling";
     
-    const durSec = settings.durDice / 10;
+    const durSec = settings.durDice / 10 / replaySpeedFactor;
     
     setTimeout(() => {
       // Lock to the front face and stamp the actual rolled value on it, so
@@ -2041,7 +2077,7 @@ function trigger3DDiceRoll(rollValue) {
       diceCube.className = "dice-cube show-1";
 
       triggerScreenShake(8, 250);
-      setTimeout(resolve, 500);
+      setTimeout(resolve, 500 / replaySpeedFactor);
     }, durSec * 1000);
   });
 }
@@ -2205,6 +2241,7 @@ function executeEmote(playerId, type) {
 
 $("btn-action-roll").addEventListener("click", async () => {
   // Humans roll the dice (engine resolves the turn server-side)
+  if (replayActive) return;
   const activePlayer = gameSession.players[gameSession.current_turn];
   if (activePlayer.is_ai || isAnimating) return;
   await executeTurn();
@@ -2268,7 +2305,7 @@ function cancelPlacement() {
 
 function handleBoardClick(tile) {
   const p = activePlayerObj();
-  if (!placement.active || p.is_ai || isAnimating) return;
+  if (replayActive || !placement.active || p.is_ai || isAnimating) return;
 
   if (placement.head === null) {
     if (!placement.validHeads.has(tile)) { playSFX("click"); setShopInstruction("Pick a glowing HEAD tile."); return; }
@@ -2360,6 +2397,20 @@ $("btn-snake-cancel").addEventListener("click", () => {
 
 // Merge an authoritative server state into gameSession (keep client-only
 // fields like stats / animatingCoords).
+function cloneReplayState(state) {
+  return {
+    tiles: JSON.parse(JSON.stringify(state.tiles || {})),
+    ladders: JSON.parse(JSON.stringify(state.ladders || [])),
+    snakes: JSON.parse(JSON.stringify(state.snakes || [])),
+    bombs: JSON.parse(JSON.stringify(state.bombs || [])),
+    players: JSON.parse(JSON.stringify(state.players || [])),
+    current_turn: state.current_turn,
+    turn_number: state.turn_number,
+    winner: state.winner || null,
+    seed: state.seed || null
+  };
+}
+
 function applyServerState(s) {
   if (!s || !s.started) return;
   gameSession.tiles = s.tiles;
@@ -2427,7 +2478,7 @@ async function animateTokenMove(moverId, from, landing, final, opts = {}) {
 // Take one turn via the engine. Works for both human and AI (the server
 // decides the AI's shop move and rolls; a human's snakes are pre-bought).
 async function executeTurn() {
-  if (isAnimating || gameSession.winner) return;
+  if (replayActive || isAnimating || gameSession.winner) return;
   const moverId = gameSession.current_turn;
   stopTurnTimer();
 
@@ -2437,6 +2488,17 @@ async function executeTurn() {
   } catch (e) {
     appendLog(`⚠ Turn failed: ${e.message}`);
     return;
+  }
+
+  if (gameSession.replayHistory) {
+    gameSession.replayHistory.push({
+      moverId,
+      move: res.move ? JSON.parse(JSON.stringify(res.move)) : null,
+      logs: Array.isArray(res.logs) ? [...res.logs] : [],
+      state: res.state ? cloneReplayState(res.state) : null,
+      winner: res.winner || null,
+      turn: gameSession.turn_number
+    });
   }
 
   const logs = res.logs || [];
@@ -2638,6 +2700,8 @@ function handleVictory(winner) {
 }
 
 function startConfettiEngine() {
+  // Ensure any previous confetti loop is stopped before starting a fresh one
+  stopConfettiEngine();
   const confCanvas = $("victory-confetti");
   const confCtx = confCanvas.getContext("2d");
   
@@ -2716,12 +2780,156 @@ $("btn-victory-replay").addEventListener("click", () => {
 // Replay was a client-side re-simulation; with the engine as the single
 // source of truth the client no longer records a replayable action log.
 // Stubbed out (kept as a friendly notice) to avoid duplicating game logic.
-async function executeGameReplay() {
-  appendLog("📺 Match replay isn't available in this version.");
-  const winner = gameSession.players.find(p => p.name === gameSession.winner);
-  if (winner) handleVictory(winner);
+function showReplayOverlay() {
+  const overlay = $("replay-overlay");
+  if (!overlay) return;
+  overlay.classList.remove("hidden");
+  updateReplayProgress();
+  updateReplaySpeedButtons();
+  $("btn-action-roll").disabled = true;
 }
 
+function hideReplayOverlay() {
+  const overlay = $("replay-overlay");
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+  $("btn-action-roll").disabled = false;
+}
+
+function updateReplayProgress() {
+  const total = gameSession.replayHistory.length;
+  const current = Math.min(replayEventIndex, total);
+  const label = $("replay-progress-text");
+  const fill = $("replay-progress-fill");
+  if (label) label.textContent = `Turn ${current} / ${total}`;
+  if (fill) fill.style.width = total > 0 ? `${(current / total) * 100}%` : "0%";
+}
+
+function updateReplaySpeedButtons() {
+  document.querySelectorAll(".replay-speed-btn").forEach(btn => {
+    const speed = Number(btn.dataset.speed);
+    if (speed === replaySpeedFactor) {
+      btn.classList.add("active");
+    } else {
+      btn.classList.remove("active");
+    }
+  });
+}
+
+function restoreReplayInitialState() {
+  if (!gameSession.replayInitialState) return;
+  const init = gameSession.replayInitialState;
+  gameSession.tiles = JSON.parse(JSON.stringify(init.tiles));
+  gameSession.ladders = JSON.parse(JSON.stringify(init.ladders));
+  gameSession.snakes = JSON.parse(JSON.stringify(init.snakes));
+  gameSession.bombs = JSON.parse(JSON.stringify(init.bombs));
+  gameSession.players = JSON.parse(JSON.stringify(init.players));
+  gameSession.current_turn = init.current_turn;
+  gameSession.turn_number = init.turn_number;
+  gameSession.winner = null;
+  gameSession.started = true;
+  gameSession.stats = {};
+  gameSession.players.forEach(p => {
+    gameSession.stats[p.id] = {
+      snakesPlaced: 0,
+      bittenCount: 0,
+      bankruptCount: 0,
+      laddersClimbed: 0,
+      bombsHit: 0,
+      pointsEarned: 0,
+      pointsStolen: 0,
+      turnsTaken: 0
+    };
+  });
+  gameSession.actionHistory = [];
+  // Reset animation state cleanly.
+  particles = [];
+  floatingNumbers = [];
+  comboPopups = [];
+  isAnimating = false;
+  animationQueue = [];
+  boardShakeOffset = { x: 0, y: 0 };
+  currentHoveredTile = null;
+  renderGameScreen();
+}
+
+async function executeGameReplay() {
+  if (!gameSession.replayInitialState || gameSession.replayHistory.length === 0) {
+    appendLog("📺 No replay data is available for this match.");
+    showScreen("game");
+    return;
+  }
+
+  replayActive = true;
+  replaySpeedFactor = 2;
+  replayEventIndex = 0;
+  showScreen("game");
+  restoreReplayInitialState();
+  showReplayOverlay();
+
+  for (; replayEventIndex < gameSession.replayHistory.length && replayActive; replayEventIndex++) {
+    const event = gameSession.replayHistory[replayEventIndex];
+    updateReplayProgress();
+    const moverId = event.moverId;
+
+    if (event.move) {
+      await trigger3DDiceRoll(event.move.roll);
+      if (event.move.landing === event.move.from && event.move.final === event.move.from) {
+        appendLog(`🚫 ${event.move.name} rolled ${event.move.roll} — overshoot, stays put.`);
+        triggerFloatingNumber(event.move.from, "SKIPPED", false);
+      } else {
+        const bankrupt = event.logs.some(l => /BANKRUPT/i.test(l));
+        const bomb = event.logs.some(l => l.includes("💣") || /Bomb/i.test(l));
+        await animateTokenMove(moverId, event.move.from, event.move.landing, event.move.final, { bomb, bankrupt });
+      }
+    }
+
+    (event.logs || []).forEach(line => appendLog(line));
+    if (event.state) {
+      applyServerState(event.state);
+      renderGameScreen();
+    }
+
+    await new Promise(r => setTimeout(r, 400 / replaySpeedFactor));
+  }
+
+  endReplay();
+}
+
+function endReplay() {
+  replayActive = false;
+  hideReplayOverlay();
+  // Determine the winner object if possible and show full victory UI
+  gameSession.winner = gameSession.winner || gameSession.replayWinner;
+  let winnerObj = null;
+  // If winner is a string name, find the player object
+  if (typeof gameSession.winner === 'string') {
+    winnerObj = gameSession.players ? gameSession.players.find(p => p.name === gameSession.winner) : null;
+  } else if (gameSession.winner && typeof gameSession.winner === 'object') {
+    // Already an object
+    winnerObj = gameSession.winner;
+  }
+
+  // Fallback: if replayWinner holds an id or name, try to resolve
+  if (!winnerObj && gameSession.replayWinner) {
+    if (typeof gameSession.replayWinner === 'string') {
+      winnerObj = gameSession.players ? gameSession.players.find(p => p.name === gameSession.replayWinner) : null;
+    } else if (typeof gameSession.replayWinner === 'object') {
+      winnerObj = gameSession.replayWinner;
+    }
+  }
+
+  // Show victory screen and populate stats via handleVictory if we can find the player
+  if (winnerObj) {
+    showScreen("victory");
+    handleVictory(winnerObj);
+  } else {
+    // If we can't resolve a winner object, still navigate to the victory screen
+    showScreen("victory");
+    // Start confetti so the screen still feels celebratory
+    startConfettiEngine();
+  }
+}
 
 // ── LOG PANEL SCROLLER ──
 function appendLog(text) {
@@ -2765,6 +2973,7 @@ $("btn-victory-menu").addEventListener("click", () => {
 // ── INITIAL BOOTSTRAP ──
 window.addEventListener("DOMContentLoaded", () => {
   loadSettings();
+  setupAudioAutoplayUnlock();
   spawnMenuParticles();
   showScreen("menu");
   
@@ -2789,4 +2998,21 @@ window.addEventListener("DOMContentLoaded", () => {
       if (tile) handleBoardClick(tile);
     });
   }
+
+  const replaySkipBtn = $("btn-replay-skip");
+  if (replaySkipBtn) {
+    replaySkipBtn.addEventListener("click", () => {
+      if (!replayActive) return;
+      replayActive = false;
+      endReplay();
+    });
+  }
+
+  document.querySelectorAll(".replay-speed-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      replaySpeedFactor = Number(btn.dataset.speed) || 2;
+      updateReplaySpeedButtons();
+      updateReplayProgress();
+    });
+  });
 });
