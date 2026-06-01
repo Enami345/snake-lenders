@@ -1,42 +1,92 @@
-# Changes — `refactor` branch (for the team)
+# Changes — `web-app` branch (for the team)
 
-Heads up team — this branch is a big gameplay + AI overhaul. Read this before
-you pull so the new rules don't surprise you.
+Heads up team — this branch ships a major AI rebuild on top of the earlier
+gameplay/web overhaul. Read this before you pull so the new behavior doesn't
+surprise you.
 
-## Newest (gameplay feel + web polish)
-- **Snakes are exact-head only now** — you only slide if you land exactly on a
-  snake head (no "near miss" bites). **Point-stealing removed.** Result: way
-  fewer bankruptcies, the game is fun instead of punishing.
+## Newest — Cunning PPO rebuild
+
+The 14-dim PPO was "too reserved." Rebuilt it as a **22-dim / 5-action cunning
+agent** with restored point-stealing and a bankruptcy-immunity cooldown.
+
+- **PPO observation 14 → 22 dim**: added bomb/ladder lookahead, leader's
+  distance to goal, combo availability flag, bankruptcy-immunity flag.
+- **PPO actions 4 → 5**: added **combo** — places a snake whose tail lands on a
+  bomb tile so the victim eats knockback + bomb damage. Action mix is
+  dominated by combo + lurk; agent uses all 5 strategies.
+- **Stochastic inference** (`deterministic=False`) + **`ent_coef=0.03`** —
+  unpredictable, varied policy instead of one repeated move.
+- **Sabotage-heavy reward shaping**: heavy opponent-setback reward, big combo
+  bonus, **anti-hoard penalty** if the agent sits on >100 points without
+  buying. Kills the "one late snake" passive policy.
+- **Point-stealing restored** (`STEAL_FLAT=15`, `STEAL_PCT=0.30`) — only on
+  player-owned snake bites (board terrain still doesn't steal).
+- **Bankruptcy-immunity cooldown** (`BANKRUPT_IMMUNITY_TURNS=6`) — after a
+  bankruptcy, further losses clamp the wallet to 0 instead of resetting again
+  for 6 of the player's own turns. Anti steal/bomb death-loop.
+- **Frozen self-play shape guard** — training only adds the existing PPO model
+  as a frozen opponent if its obs/action shape matches; legacy 14-dim/4-action
+  snapshots are skipped with a warning instead of crashing `predict()`.
+- **Forced `device="cpu"`** — CPU is faster than the low-utilization GPU path
+  for this small MLP (SB3 even warns about it). The "PPO on GPU" warning that
+  still prints is spurious; the next line confirms `Using cpu device`.
+- **Server PPO try/except per turn** — if `ppo_decision` raises (shape
+  mismatch while a retrain is mid-write), the Hard AI falls back to Expectimax
+  for the turn so the game doesn't crash.
+- **Two-stage training recipe** documented in `knowledge/training.md`:
+  - Stage 1: `train_ppo(3000000, opponent_pool=True)` (~80 min CPU, frozen
+    self-play auto-skipped if shape mismatches).
+  - **Back up before polishing:** `copy ai\ppo_model.zip ai\ppo_model_backup.zip`.
+  - Stage 2: `train_ppo(2000000, opponent_pool=True)` (~55 min CPU, true
+    continuation — stage-1 weights are loaded AND stage-1 PPO joins the
+    frozen opponent pool; final file ≈ 5M total steps).
+- **`train_ppo` continuation fix** — original `train_ppo` always built a
+  fresh PPO and overwrote the model on save, so a "stage 2" run was really
+  2M-from-scratch (and silently regressed 64%→52% WR on the first attempt).
+  Now `train_ppo` loads the existing model if its shape matches
+  (`PPO.load(..., env=vec_env)`) and calls `learn(reset_num_timesteps=False)`
+  so the step counter and weights accumulate. Falls back to fresh PPO with a
+  logged reason if the file is missing/incompatible.
+- **Eval (200 games each, stochastic):** WR vs Easy **64%** (4.18 snakes/game,
+  3.98 combos/game), WR vs Strong **62%** (4.12 snakes/game, 4.00 combos/game).
+  PPO self-bankrupt 0.30-0.45/game (immunity working).
+
+## Earlier (gameplay feel + web polish)
+- **Snakes are exact-head only** — you only slide if you land exactly on a
+  snake head (no "near miss" bites).
 - **Mixed difficulty:** pick how many AIs are Hard (rest Easy) — menu has a
   "Hard AIs" count; CLI `--hard-ais N`.
 - **Ladders** capped at 5–20 climb and spread out (no clustered/overlapping ladders).
 - **Web UI:** title page → config → loading screen → board with **per-step token
   animation**; New game fully resets; refresh resumes; server is threaded (fixes
   the browser hang).
-- Heads-up: with exact-head snakes the **Hard AI is ~level with Easy in bot-vs-bot
-  sims** (it still beats humans). The big PPO win rates were under the older
-  stronger-snake rule. Retraining for exact-head is optional.
+- **Engine-driven web** — the Flask server runs the Python engine as the single
+  source of truth; `web/app.js` is a thin client (canvas render + animations
+  only, no JS rules).
 
-## Earlier additions (web UI, multiplayer, stronger AI)
-- **Web UI** (`python main.py --web` → http://localhost:8000). Plain
-  HTML/CSS/JS, no extra deps — this is the new primary UI (teammate will
-  restyle `ui/web/style.css`). Pygame still works.
+## Earlier additions (web UI, multiplayer, opponent-pool training)
+- **Web UI** is now Flask-served on `http://localhost:5000` (`python main.py
+  --web`), engine-driven — the Python engine in `game/` is the single source
+  of truth; `web/app.js` is a thin client (canvas render + animations only).
+  Pygame still works.
 - **2-4 players, any mix of humans and AI**, shuffled turn order. Setup is
-  asked on launch (or `--players/--humans/--difficulty`).
-- **Stronger Hard AI:** retrained 2.5M steps with **self-play / opponent pool**.
-  Wins ~89-91% vs Easy, ~89% vs a strong heuristic, dominates 4-player FFAs.
-  Model shipped + a backup fallback. Full numbers in `knowledge/training.md`.
-- Snakes are **single-use traps with a strike range** and **steal points**; your
-  own snakes don't bite you. (See rules below.)
-- `--mode hvai/aivai` flags are gone — use `--players/--humans/--difficulty`.
+  asked on launch (or `--players/--humans/--hard-ais/--difficulty`).
+- **Opponent-pool training** (`train_ppo(opponent_pool=True)`): each episode
+  draws an opponent from {Easy, Strong heuristic, frozen self-PPO}. The frozen
+  self-PPO is added only if its shape matches the current env (the cunning
+  rebuild's guard).
+- `--mode hvai/aivai` flags are gone — use `--players/--humans/--hard-ais`.
 
 ## TL;DR
 - The **economy is now the core of the game.** Points are scarce; you spend them
   on snakes to sabotage opponents. Just rolling and ignoring the shop will lose.
-- **Two real difficulties:** Easy (a weak, beatable bot) and Hard (a trained PPO
-  agent that beats Easy ~90% of the time and a strong heuristic ~89%).
-- A **trained PPO model is included** (`ai/ppo_model.zip`) — Hard mode works out
-  of the box, no training step required.
+- **Two real difficulties:** Easy (a weak, beatable bot) and Hard (the cunning
+  22-dim / 5-action PPO agent — stochastic, sabotage-heavy, combo-spamming;
+  WR vs Easy ~64%, vs Strong heuristic ~62%).
+- A **trained PPO model is included** (`ai/ppo_model.zip` — cunning rebuild) —
+  Hard mode works out of the box, no training step required.
+- **Point-stealing on player-snake bites is back.** Bankruptcy gets a 6-turn
+  immunity cooldown so death-loops can't happen.
 
 ## What to do after pulling
 ```bash
@@ -49,27 +99,38 @@ python main.py --web                             # play in the browser
 You do **not** need to retrain — the model is committed. (Optional: `python
 main.py --train` to regenerate it.)
 
-## New / changed rules
+## Current rules (after both passes)
 - **Exact roll to win:** overshooting tile 100 = invalid move, you stay put.
 - **Snakes:**
-  - Player-placed snakes have a **strike range** (head + a few tiles below), so a
-    well-placed trap reliably catches a passing opponent. Jumping clean over is
-    safe. **Your own snakes don't bite you.**
-  - A bite **slides you back AND steals your points** to the snake's owner.
+  - **Exact-head only** — you slide only when you land exactly on a head.
+    Landing below or jumping clean over is safe.
+  - A bite from a **player-owned snake** slides you back AND **steals points**
+    (`STEAL_FLAT=15 + 30%` of your remaining points) to the snake's owner.
+    Board terrain bites don't steal.
+  - **Your own snakes don't bite you** (owner immunity).
   - Player snakes are **single-use** (consumed when they fire — then re-place).
-  - Board snakes are unchanged terrain (exact-head only).
   - You can't build a **wall** of adjacent snake heads.
-- **Economy:** tile income is low; snake pricing is sub-linear (save up for a big
-  one). **Bombs scale with depth and can bankrupt you → back to tile 0.**
+- **Bankruptcy:** points below zero → back to tile 0, wallet zeroed, and you
+  get a **6-turn immunity cooldown** during which further losses clamp the
+  wallet to 0 instead of resetting again. Anti death-loop.
+- **Economy:** tile income is low; snake pricing is sub-linear (save up for a
+  big one). **Bombs scale with depth and can bankrupt you.**
 
 ## Code changes (where to look)
-- `game/engine.py` — movement, strike-range snakes, owner immunity, point theft,
-  scaled bombs, snake pricing, anti-wall rule.
+- `game/engine.py` — exact-head snakes, owner immunity, **point theft restored**
+  (`_steal_points`, `STEAL_FLAT=15`, `STEAL_PCT=0.30`), scaled bombs, snake
+  pricing, anti-wall rule, **`bankrupt_immune` decrement** in `do_turn`.
 - `game/board.py` — scarce tile income.
-- `game/models.py` — bankruptcy behavior.
-- `ai/expectimax.py` — Easy bot (weakened) + catch-optimal placement strategies.
-- `ai/ppo_agent.py` — fixed/expanded PPO env (4-action strategy space), reward,
-  inference; retrained model.
+- `game/models.py` — **`BANKRUPT_IMMUNITY_TURNS=6`**, `Player.bankrupt_immune`,
+  `deduct_points` clamps to 0 during immunity.
+- `ai/expectimax.py` — Easy bot (weakened) + catch-optimal placement strategies,
+  **`propose_combo` (tail-on-bomb placement)**, `strong_decision` heuristic.
+- `ai/ppo_agent.py` — **22-dim `encode_state`**, **`N_ACTIONS=5`** (combo
+  action), cunning `_compute_reward` (heavy opp-setback, combo bonus,
+  anti-hoard), `ent_coef=0.03`, `device="cpu"`, **stochastic** `ppo_decision`,
+  frozen self-play shape guard in `build_training_env`.
+- `server.py` — PPO inference wrapped in try/except per turn (graceful
+  Expectimax fallback on shape mismatch / inference error).
 - `main.py` — UTF-8 console output (fixes a Windows crash with the emoji logs).
 - `knowledge/` — full design notes and the decision log behind all of this.
 

@@ -34,6 +34,12 @@ STRIKE_ZONE = 0
 # adjacent tiles (overlapping strike ranges) that gets too sticky to pass.
 MAX_HEAD_RUN = 2
 
+# A player-placed snake also ROBS its victim on a bite — flat + slice of
+# their wallet, transferred to the snake's owner. Death-loop is prevented
+# by the bankruptcy-immunity window in Player.deduct_points.
+STEAL_FLAT = 15
+STEAL_PCT  = 0.30
+
 
 def roll_dice() -> int:
     return random.randint(1, 6)
@@ -176,9 +182,34 @@ def _apply_snakes(board: BoardState, player: Player,
             logs.append(f"  🐍 Snake! {player.name} landed on snake "
                         f"{snake.head} and slides to {snake.tail}")
             player.position = snake.tail
+            _steal_points(board, player, snake, logs)
             _consume_snake(board, snake)
         else:
             break
+
+
+def _steal_points(board: BoardState, victim: Player,
+                  snake: Snake, logs: list) -> None:
+    """Player-placed snake robs its victim, paying the owner. Board snakes
+    don't steal. Bankruptcy from theft is allowed (resets to tile 0); the
+    cooldown in Player.deduct_points prevents back-to-back resets."""
+    if snake.owner_id < 0:
+        return
+    pre_bank = victim.bankrupt_count
+    pre_pts  = max(victim.points, 0)
+    if pre_pts <= 0:
+        return
+    amount = STEAL_FLAT + int(pre_pts * STEAL_PCT)
+    taken  = min(amount, pre_pts)
+    victim.deduct_points(amount)               # may bankrupt (with cooldown)
+    owner = next((p for p in board.players
+                  if p.player_id == snake.owner_id), None)
+    if owner is not None and owner is not victim and taken > 0:
+        owner.add_points(taken)
+        logs.append(f"  💸 snake {snake.head} robs {taken} pts from "
+                    f"{victim.name} → {owner.name}")
+    if victim.bankrupt_count > pre_bank:
+        logs.append(f"  ☠️ {victim.name} went BANKRUPT from the theft — reset to tile 0!")
 
 
 def _apply_ladders(board: BoardState, player: Player,
@@ -311,6 +342,10 @@ def do_turn(board: BoardState, shop_decision=None) -> dict:
     move = {"player_id": player.player_id, "name": player.name,
             "roll": roll, "from": from_pos, "landing": landing,
             "final": player.position}
+
+    # Tick this player's bankruptcy-immunity window (death-loop guard).
+    if player.bankrupt_immune > 0:
+        player.bankrupt_immune -= 1
 
     # Check win
     winner = check_winner(board)

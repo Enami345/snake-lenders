@@ -359,6 +359,30 @@ def propose_big_snake(board: BoardState, player: Player) -> dict | None:
     return best
 
 
+def propose_combo(board: BoardState, player: Player) -> dict | None:
+    """
+    COMBO: place a snake whose TAIL lands on a bomb tile, so a bitten
+    opponent slides into the bomb → extra bomb damage on top of theft +
+    knockback. Catch-optimal head placement; max setback among combos.
+    """
+    opp = _leading_opponent(board, player)
+    if opp is None or not board.bombs:
+        return None
+    best = None
+    best_setback = 0
+    for tail in board.bombs:
+        for offset in _catch_offsets():
+            head = opp.position + offset
+            if head > MAX_SNAKE_HEAD or head <= tail:
+                continue
+            if _placeable(board, player, head, tail):
+                setback = head - tail
+                if setback > best_setback:
+                    best_setback = setback
+                    best = {"head": head, "tail": tail}
+    return best
+
+
 def propose_lurk(board: BoardState, player: Player) -> dict | None:
     """
     Win-denial: against an almost-finished opponent, drop a catch-optimal,

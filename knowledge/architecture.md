@@ -5,10 +5,19 @@
 ```python
 Snake(head, tail, owner_id)   # owner_id = -1 board terrain, >=0 player trap
 Ladder(bottom, top)
-Player(player_id, name, position=0, points=0, snakes_owned=[], is_ai, ai_difficulty, bankrupt_count)
+Player(player_id, name, position=0, points=0, snakes_owned=[], is_ai,
+       ai_difficulty, bankrupt_count, bankrupt_immune)
 BoardState(tiles, ladders, snakes, bombs, players, current_turn, turn_number)
 ```
-- `Player.go_bankrupt()` → position=0, points=0, bankrupt_count+1 (reset to start; logs via `gprint`).
+- `BANKRUPT_IMMUNITY_TURNS = 6` — turns of post-bankruptcy immunity. While
+  `bankrupt_immune > 0`, `Player.deduct_points()` clamps the wallet to 0
+  instead of triggering another bankruptcy (anti steal/bomb death-loop).
+- `Player.go_bankrupt()` → position=0, points=0, bankrupt_count+1,
+  `bankrupt_immune = BANKRUPT_IMMUNITY_TURNS` (reset to start; logs via `gprint`).
+- `Player.deduct_points()` decrements wallet; if it would go below 0 and the
+  player is immune → clamp to 0 with a 🛡️ log line; else `go_bankrupt()`.
+- `bankrupt_immune` is ticked down once per the player's own turn in
+  `engine.do_turn`.
 - `BoardState.active_player`, `next_turn()` — generic over N players.
 - `get_snake_at`/`get_ladder_at` = exact-tile lookups (head / bottom).
 
@@ -26,7 +35,9 @@ BoardState(tiles, ladders, snakes, bombs, players, current_turn, turn_number)
 Economy / snake constants:
 `BASE_SNAKE_PRICE=2`, `PRICE_ALPHA=0.9` (sub-linear), `MIN_SNAKE_COST=12`,
 `MAX_SNAKE_HEAD=90`, `STRIKE_ZONE=0` (exact-head only), `MAX_HEAD_RUN=2`,
-`BOMB_BASE=18`/`BOMB_DEPTH=6`. (Point-stealing was removed.)
+`BOMB_BASE=18`/`BOMB_DEPTH=6`. **Point-stealing: `STEAL_FLAT=15`,
+`STEAL_PCT=0.30`** (restored — only fires on player-owned snake bites, not
+board terrain).
 
 Key functions:
 - `calculate_snake_cost` — `max(BASE * purchase_count * length^ALPHA, MIN)`.
@@ -37,9 +48,15 @@ Key functions:
   returns a `move` breakdown {from, landing, final, roll} for UI animation.
 - `_striking_snake(board, tile, mover_id)` — bite if landed within `STRIKE_ZONE`
   tiles below head (0 = exact head only); **owner immune**; highest head wins.
-- `_apply_snakes` — slides to tail, `_consume_snake` (player snakes single-use).
-  No point theft. Loop terminates (always moves down).
+- `_steal_points(board, victim, snake, logs)` — on a player-owned bite, robs
+  `STEAL_FLAT + STEAL_PCT * victim.points` and credits the snake's owner.
+  Skipped for board-terrain snakes (`owner_id < 0`) and when the victim has 0
+  points. Bankruptcy from the theft is logged ("☠️ … went BANKRUPT").
+- `_apply_snakes` — slides to tail, calls `_steal_points`, then
+  `_consume_snake` (player snakes single-use). Loop terminates (always moves down).
 - `_apply_ladders` — exact climb.
+- `do_turn` — ticks down `active_player.bankrupt_immune` at the start of each
+  of their own turns; returns `{logs, winner, bought, move}`.
 - `buy_snake`, `do_turn(board, shop_decision)` → {logs, winner, bought, move}.
 
 ## Easy AI (`ai/expectimax.py`) — deliberately WEAK
@@ -48,28 +65,50 @@ Key functions:
   `EASY_SKIP_PROB=0.35` hesitation, only cheap short traps, over-hoards
   (`EASY_BUFFER=45`). Beatable baseline.
 - Placement strategies (also used by PPO): `propose_cheap_trap`, `propose_big_snake`,
-  `propose_lurk` — all **catch-optimal** (`_catch_offsets` = STRIKE_ZONE+1..6, so the
-  strike zone lands inside the target's dice range).
+  `propose_lurk`, **`propose_combo`** — all **catch-optimal**
+  (`_catch_offsets` = STRIKE_ZONE+1..6, so the strike zone lands inside the
+  target's dice range). `propose_combo` picks the highest-setback placement
+  whose **tail lands on a bomb tile** (knockback + bomb damage stack).
+- `strong_decision` — hand-tuned cunning baseline used in the PPO opponent pool.
 - `evaluate_snake_placement`, `find_best_snake_to_buy` — damage model
   (`setback × TILE_VALUE × p_hit × progress_weight`, win-denial bonus).
 - `evaluate_state` / `expected_value_after_roll` — EV/chance-node helpers kept to
   document the Expectimax concept (not used by the live decision).
 
-## Hard AI (`ai/ppo_agent.py`) — PPO
+## Hard AI (`ai/ppo_agent.py`) — PPO (cunning rebuild)
 
-- `encode_state` → 14-dim obs.
-- Env: **Discrete(4)** actions (`_action_to_shop`): roll / cheap trap / big snake /
-  win-denial lurk. `step()` = agent turn then opponents play their own Expectimax;
-  reward = ±100 win/loss + bounded progress delta + opponent-setback + bankruptcy
-  penalty. Trained vs the weak Easy bot.
-- `train_ppo(total_timesteps, opponent_pool, save_path)` — 4 parallel envs;
-  `opponent_pool=True` trains vs {Easy, Strong heuristic, frozen best PPO}.
+- `encode_state` → **22-dim** obs. Layout: agent pos/points/snake_count,
+  up to 3 opponents' positions/points/snake_counts, snakes ahead of leader,
+  nearest bomb distance ahead, nearest ladder distance ahead, best available
+  snake (cost / damage / affordable), **combo availability**, **bankruptcy-
+  immunity flag**, leader's distance to goal, turn number.
+- Env: **Discrete(5)** actions (`_action_to_shop`): `0` roll, `1` cheap trap,
+  `2` big snake, `3` win-denial lurk, **`4` combo (tail-on-bomb)**.
+  `step()` = agent turn then opponents play their own decider until it's the
+  agent's turn again.
+- **Cunning reward shaping** (`_compute_reward`): ±100 win/loss dominates;
+  shaping = `+0.1 * progress` + `+0.5 * opponent_setback` (heavy sabotage) +
+  `-50` on bankruptcy + on a snake buy `+4.0 + 0.3 * placed_setback` and
+  **`+12.0`** if the placed snake is a combo; **anti-hoard `-1.0`** if the
+  agent passes on buying while sitting on >100 points.
+- PPO config: `MlpPolicy`, lr `3e-4`, `n_steps=2048`, `gamma=0.99`,
+  `clip_range=0.2`, **`ent_coef=0.03`** (entropy bonus → varied/unpredictable
+  policy), **`device="cpu"`** (CPU is faster than the low-utilization GPU path
+  for this small MLP), 4 parallel envs.
+- `train_ppo(total_timesteps, opponent_pool, save_path)` — `opponent_pool=True`
+  trains vs {Easy, Strong heuristic, frozen self-PPO}. The frozen self-play
+  opponent is only added if its `observation_space` and `action_space.n`
+  **match the current env** (22 / 5); incompatible snapshots (e.g. old 14-dim
+  models) are skipped with a warning so `predict()` doesn't crash mid-training.
 - `load_ppo_model` — tries `MODEL_PATH` then `BACKUP_PATH` (survives mid-write
-  training); `ppo_decision` deterministic inference.
-- **Shipped model: exact-head-trained, 2.5M, self-play pool.** Proven **> Easy
-  (~54-56%)**; doesn't dominate (exact-head snakes fire ~1/6 → dice cap ~57%).
-  Skill shows in behavior: Hard avg snake length ~53 (+ win-denial lurks) vs
-  Easy ~7.5. (Historical: an interim strike-range rule hit ~89-94%.) See `training.md`.
+  training).
+- `ppo_decision` — **stochastic** inference (`deterministic=False`), so the
+  agent mixes patience, cheap pressure, big knockbacks, lurks, and combos
+  instead of locking into one move.
+- **Shipped model: 22-dim / 5-action cunning rebuild, ~3M base + 2M self-play
+  stage-2.** Measured WR vs Easy ~64%, vs Strong ~62%, ~4 snakes/game and
+  ~4 combos/game (vs the prior 14-dim reserved build at ~1-2 snakes / 0
+  combos). See `training.md`.
 
 ## Setup + Entry (`main.py`)
 
@@ -87,7 +126,10 @@ The **Python engine (`game/`) is the single source of truth.** The web client
 does NOT reimplement rules — it renders state and sends actions.
 
 - `server.py` — **Flask, stateful** (`Session` holds one game), preloads the PPO
-  model. Endpoints:
+  model. **PPO inference is wrapped in try/except per turn** — if `ppo_decision`
+  raises (e.g. shape mismatch while a retrain is mid-write), the Hard AI falls
+  back to `expectimax_decision` for that turn and the game keeps playing.
+  Endpoints:
   - `POST /api/new` (players list + seed) → builds board via `generate_board`.
   - `GET  /api/state` → full serialized board state.
   - `GET  /api/shop-options` → valid + affordable placements for the active human

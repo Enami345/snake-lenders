@@ -59,7 +59,10 @@ class Session:
 
     def _ai_decision(self, player):
         if player.ai_difficulty == "hard" and PPO_MODEL is not None:
-            return ppo_decision(self.board, player, PPO_MODEL)
+            try:
+                return ppo_decision(self.board, player, PPO_MODEL)
+            except Exception as e:
+                print(f"[PPO] inference error: {e} — falling back to Expectimax this turn.")
         return expectimax_decision(self.board, player)
 
     def buy(self, head, tail):

@@ -94,7 +94,10 @@ Economy Engine — Exponential Pricing (manuscript design)
 
 AI Systems
   → Expectimax: Dice EV tree (1/6 per outcome) + Trap ROI (FIX 3: EV pre-computed, injected into PPO state vec)
-  → PPO Agent: 14-dim state input (board + wallets + pos + Expectimax EV vec) → Policy (Roll or Buy)
+  → PPO Agent: **22-dim** state input (board + wallets + pos + bomb/ladder
+                 lookahead + leader's distance to goal + combo availability +
+                 bankruptcy-immunity flag + Expectimax best-snake EV vec) →
+                 Policy (Roll / Cheap / Big / Lurk / Combo)
 
 Win Condition: First to tile 100
 Bankruptcy Reset (was TBD in design): Points < 0 → return to tile 1 [NOW IMPLEMENTED]
@@ -118,22 +121,23 @@ Bankruptcy Reset (was TBD in design): Points < 0 → return to tile 1 [NOW IMPLE
 | "Millions of simulations" for PPO | Actual: 100k steps default (4 parallel envs) |
 | α = 1.3 tunable parameter | Not in code; simplified to fixed multipliers |
 
-## Further divergence after the `refactor/economy-ai-overhaul` branch
+## Further divergence after the gameplay/AI overhaul + cunning PPO rebuild
 
 The manuscript (PDF, can't be edited from code) is now well behind the game.
 Current reality vs manuscript:
 
 | Manuscript | Current code |
 |---|---|
-| Snakes bite on exact head | **Exact-head only** (matches doc); single-use player traps, owner-immune; no point-stealing |
+| Snakes bite on exact head | **Exact-head only** (matches doc); single-use player traps, owner-immune; **point-stealing restored** (`STEAL_FLAT=15 + 30%` of victim points → owner) |
+| (no immunity concept) | **Bankruptcy-immunity cooldown** — 6 turns after a bankruptcy, further losses clamp to 0 instead of resetting again (anti death-loop) |
 | Exponential pricing α=1.3 | **Sub-linear** `2 × purchase_count × length^0.9`, min 12 |
-| Generous economy | **Scarce** income (~4-14/turn); depth-scaled bombs; bankruptcy → tile 0 (rare) |
+| Generous economy | **Scarce** income (~4-14/turn); depth-scaled bombs; bankruptcy → tile 0 |
 | Easy = Expectimax (smart) | Easy = **deliberately weak** Expectimax baseline |
-| Hard = PPO (long-term) | PPO **Discrete(4)**; under exact-head ~level with Easy in sims (was ~94% under an interim strike-range rule) |
+| Hard = PPO (long-term) | PPO **22-dim obs / Discrete(5)** (roll / cheap / big / lurk / **combo = tail-on-bomb**); cunning reward shaping (heavy opp-setback, large combo bonus, anti-hoard penalty); **stochastic** inference. WR vs Easy ~64%, vs Strong ~62% |
 | Bounce-back on overshoot | **Exact roll to win** (stay put on overshoot) |
-| Ladders jump to 90+ | Ladder climbs capped **5–20** tiles, spaced out (anti-clutter) |
+| Ladders jump to 90+ | Ladder climbs capped **5-20** tiles, spaced out (anti-clutter) |
 | 2-player focus | **2-4 players**, 0-N humans, **mixed Easy/Hard**, shuffled turns |
-| (UI unspecified) | **Web UI** (stdlib, title→config→loading→animated board) primary; Pygame legacy |
+| (UI unspecified) | **Web UI** (Flask, engine-driven thin client; title→config→loading→animated board) primary; Pygame legacy |
 
 If the manuscript must match the build for submission, update the PDF — the code
 is the source of truth now.
