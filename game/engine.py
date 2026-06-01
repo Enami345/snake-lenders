@@ -34,10 +34,9 @@ STRIKE_ZONE = 0
 # adjacent tiles (overlapping strike ranges) that gets too sticky to pass.
 MAX_HEAD_RUN = 2
 
-# A player-placed snake also ROBS its victim on a bite: the victim loses
-# points (flat + a slice of their wallet), transferred to the snake's owner.
-# Bankruptcy now keeps the player's tile (see Player.go_bankrupt), so theft
-# can no longer cause a position death-loop.
+# A player-placed snake also ROBS its victim on a bite — flat + slice of
+# their wallet, transferred to the snake's owner. Death-loop is prevented
+# by the bankruptcy-immunity window in Player.deduct_points.
 STEAL_FLAT = 15
 STEAL_PCT  = 0.30
 
@@ -191,21 +190,18 @@ def _apply_snakes(board: BoardState, player: Player,
 
 def _steal_points(board: BoardState, victim: Player,
                   snake: Snake, logs: list) -> None:
-    """
-    A player-placed snake robs its victim, paying the owner. Board snakes
-    don't steal. Theft can trigger a real bankruptcy (position reset) — but
-    only if the victim isn't already in the post-bankruptcy immunity window,
-    which prevents back-to-back resets (death-loop guard lives in Player).
-    """
+    """Player-placed snake robs its victim, paying the owner. Board snakes
+    don't steal. Bankruptcy from theft is allowed (resets to tile 0); the
+    cooldown in Player.deduct_points prevents back-to-back resets."""
     if snake.owner_id < 0:
         return
     pre_bank = victim.bankrupt_count
     pre_pts  = max(victim.points, 0)
     if pre_pts <= 0:
-        return                                          # nothing to take
+        return
     amount = STEAL_FLAT + int(pre_pts * STEAL_PCT)
     taken  = min(amount, pre_pts)
-    victim.deduct_points(amount)                        # may bankrupt (with cooldown)
+    victim.deduct_points(amount)               # may bankrupt (with cooldown)
     owner = next((p for p in board.players
                   if p.player_id == snake.owner_id), None)
     if owner is not None and owner is not victim and taken > 0:
@@ -347,7 +343,7 @@ def do_turn(board: BoardState, shop_decision=None) -> dict:
             "roll": roll, "from": from_pos, "landing": landing,
             "final": player.position}
 
-    # Tick down this player's bankruptcy-immunity window (death-loop guard).
+    # Tick this player's bankruptcy-immunity window (death-loop guard).
     if player.bankrupt_immune > 0:
         player.bankrupt_immune -= 1
 

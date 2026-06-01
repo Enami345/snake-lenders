@@ -83,9 +83,20 @@ python main.py --phase 1                # board-generation test
 python main.py --train --steps 2500000  # (re)train the PPO Hard AI
 ```
 
-A trained `ai/ppo_model.zip` is **included** (a 2.5M-step self-play model), so
-Hard mode works out of the box. A stable `ai/ppo_model_backup.zip` is used if the
-main file is missing/mid-write; if neither loads, Hard falls back to Expectimax.
+A trained `ai/ppo_model.zip` is **included** (cunning rebuild — 22-dim /
+5-action, ~3M-step stage-1 cunning model), so Hard mode works out of the box.
+`ai/ppo_model_backup.zip` is the last known-good restore point (manual backup
+before risky polish runs); `load_ppo_model` also serves it as a last-resort
+inference path if the main file is missing/mid-write. If neither loads, Hard
+falls back to Expectimax. The web server also wraps PPO inference in
+try/except per turn so a shape-mismatched model can't crash the game — it
+falls back to Expectimax for the turn.
+
+`train_ppo` continues from `ai/ppo_model.zip` when the shape matches
+(`reset_num_timesteps=False`), so multi-stage runs actually accumulate steps
+instead of silently overwriting prior work. Always
+`copy ai\ppo_model.zip ai\ppo_model_backup.zip` before a polish run so a
+regression is recoverable.
 
 ---
 
@@ -118,7 +129,9 @@ main file is missing/mid-write; if neither loads, Hard falls back to Expectimax.
 ### Snakes — exact-head only
 - You slide **only when you land exactly on a snake head.** Landing on a tile
   *below* the head, or jumping clean *over* it, is safe.
-- A bite just **slides you down to the tail** (no point-stealing).
+- A bite from a **player-owned snake also steals points** to its owner
+  (`STEAL_FLAT=15 + 30%` of your remaining points). Bites by the board's
+  permanent terrain snakes don't steal.
 - **Owner immunity:** your own snakes never bite you.
 - Player snakes are **single-use**: once a snake fires it's consumed, freeing a
   slot so you can place another. Board snakes are permanent terrain.
@@ -126,9 +139,11 @@ main file is missing/mid-write; if neither loads, Hard falls back to Expectimax.
 ### Economy (the heart of the game)
 - **Tile income is scarce** (~4–14 points/turn) — you must manage points, not
   hoard mindlessly.
-- **Bombs scale with board depth** (deeper = nastier) and can push you below zero
-  → **bankruptcy**: sent **back to tile 0** with zero points (rare now, ~1 per 5
-  games for a passive player).
+- **Bombs scale with board depth** (deeper = nastier) and can push you below
+  zero → **bankruptcy**: sent **back to tile 0** with zero points.
+- **Bankruptcy-immunity cooldown:** for 6 turns after going bankrupt, further
+  losses (steals, bombs) **clamp your wallet to 0** instead of resetting your
+  position again. Protects against steal/bomb death-loops.
 - Tile 100 gives a small finish bonus.
 
 ### Snake Shop
@@ -155,16 +170,28 @@ A simple, beatable baseline: it reacts late, hesitates, hoards too many points,
 and only ever places cheap short traps. Good for learning the game. No training.
 
 ### Hard — PPO (Proximal Policy Optimization)
-A neural-network agent (`stable-baselines3`) that chooses a **strategy** each turn
-from a 4-action space (roll / cheap trap / save-for-big / win-denial lurk),
-trained by self-play against an opponent pool. A trained model ships with the repo.
+A neural-network agent (`stable-baselines3`) that reads a **22-dim view of the
+board** (positions, points, snake counts, bomb/ladder lookahead, leader's
+distance to goal, combo availability, bankruptcy-immunity flag) and picks one
+of **5 strategies** each turn:
 
-> Note: the shipped model is **exact-head-trained (2.5M, self-play)** and is
-> **proven stronger than Easy (~54-56%)** — it just doesn't dominate, because
-> exact-head snakes fire only ~1/6 and the dice cap the gap. The skill difference
-> shows in *behavior*: Hard saves up for ~50-tile knockbacks + finish-line traps,
-> Easy only sprinkles short cheap snakes (avg length 53 vs 7.5). Full detail in
-> `knowledge/training.md`.
+| Action | What it does |
+|---|---|
+| `roll`   | Just roll — save points for later |
+| `cheap`  | Place a cheap short trap (pressure) |
+| `big`    | Save up and drop the longest affordable snake (max knockback) |
+| `lurk`   | Place a win-denial snake near the goal (tiles 85-90) |
+| `combo`  | **Land a snake's tail on a bomb tile** — knockback + bomb damage stack |
+
+Trained against an **opponent pool** {Easy, Strong heuristic, frozen self-PPO
+snapshot} with sabotage-heavy reward shaping (heavy opponent-setback reward,
+large combo bonus, anti-hoard penalty) and **stochastic** inference for
+unpredictable, cunning play.
+
+> Shipped model: **cunning rebuild, 22-dim / 5-action, ~3M base + 2M self-play
+> stage-2.** Measured WR vs Easy ~64%, vs Strong heuristic ~62%, ~4 snakes/game
+> and ~4 combos/game vs the prior reserved 14-dim build at ~1-2 snakes / 0
+> combos. Full detail in `knowledge/training.md`.
 
 ---
 
@@ -173,9 +200,12 @@ trained by self-play against an opponent pool. A trained model ships with the re
 This branch reworks the game (economy, AIs, a web UI, local multiplayer).
 
 **Latest tuning (current rules)**
-- Snakes are **exact-head only** and **don't steal points** — far fewer
-  bankruptcies, fairer play. (An earlier strike-range + steal version made the AI
-  strong but caused bankruptcy spirals.)
+- Snakes are **exact-head only**. Player-owned snake bites **steal points**
+  to the owner (`STEAL_FLAT=15 + 30%` of victim points) — restored to make
+  sabotage stressful and self-fund the saboteur. Board terrain snakes don't
+  steal.
+- **Bankruptcy-immunity cooldown** (6 turns) clamps further losses to 0 instead
+  of resetting the player again — prevents steal/bomb death-loops.
 - Ladder climbs capped at 5–20 tiles and **spread out** (no clustered ladders).
 - **Mixed difficulty:** choose how many AIs are Hard (rest Easy).
 - **Web UI** with a title page → config → loading screen → animated board.
@@ -197,9 +227,16 @@ This branch reworks the game (economy, AIs, a web UI, local multiplayer).
 **AI**
 - Rewrote the **Expectimax** AI into a cunning, aggressive, win-denying saboteur
   with proper points-based valuation (the old ROI math treated cost as ~free).
-- Rebuilt the **PPO** Hard AI: fixed a broken training environment (turns didn't
-  alternate; the opponent never played its own policy), fixed runaway reward
-  shaping, expanded the action space to 4 strategies, and retrained.
+  Added a **`propose_combo`** placement helper that lands a snake's tail on a
+  bomb tile for compound damage.
+- Rebuilt the **PPO** Hard AI as a **22-dim / 5-action cunning agent** with
+  stochastic inference, sabotage-heavy reward shaping (heavy opponent-setback
+  reward, large combo bonus, anti-hoard penalty), forced CPU execution (faster
+  than the low-utilization GPU path for this small MLP), and a frozen self-play
+  shape guard that skips legacy snapshots whose obs/action shape doesn't match.
+  Server-side PPO inference is wrapped in try/except per turn — if it raises
+  (e.g. shape mismatch mid-write), the Hard AI falls back to Expectimax for
+  the turn.
 
 **Infra**
 - Forced **UTF-8 console output** so emoji/arrow game logs don't crash on Windows.

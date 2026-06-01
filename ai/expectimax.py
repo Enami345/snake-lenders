@@ -361,9 +361,9 @@ def propose_big_snake(board: BoardState, player: Player) -> dict | None:
 
 def propose_combo(board: BoardState, player: Player) -> dict | None:
     """
-    Combo: place a snake whose TAIL lands on a bomb tile, so a bitten
-    opponent slides into the bomb → bomb damage on top of theft + knockback.
-    Chooses the highest-setback combo that catches the leading opponent.
+    COMBO: place a snake whose TAIL lands on a bomb tile, so a bitten
+    opponent slides into the bomb → extra bomb damage on top of theft +
+    knockback. Catch-optimal head placement; max setback among combos.
     """
     opp = _leading_opponent(board, player)
     if opp is None or not board.bombs:

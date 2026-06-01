@@ -57,14 +57,14 @@ Ranked by importance. P0 = breaks core premise or grader claims. P1 = real bugs.
 - [x] **Model load resilience** — `load_ppo_model` tries main → backup (survives mid-write training); graceful Expectimax fallback. AI logs use real player names + `(PPO)` tag.
 - [x] **AI training + quality fully documented** — see [training.md](training.md) (timesteps↔games, plateau, model lineage, full win-rate battery).
 
-## Gameplay-feel pass (latest)
+## Gameplay-feel pass (earlier)
 
 - [x] **Snakes → exact-head only** (`STRIKE_ZONE=0`) — bite only on landing exactly on a head (user's chosen rule). Removes "near-miss" bites.
-- [x] **Removed point-stealing** — bite just slides to tail. Killed the bankruptcy death-spiral; passive-human bankruptcies ~0.21/game.
+- [x] **Removed point-stealing** — bite just slides to tail. Killed the bankruptcy death-spiral; passive-human bankruptcies ~0.21/game. **(Later REVERTED — see Cunning rebuild below.)**
 - [x] **Mixed Easy/Hard AIs** — `build_players(n_players, n_humans, n_hard)`; menu "Hard AIs" count; CLI `--hard-ais N` (`--difficulty` = all/none shortcut).
 - [x] **Ladder anti-clutter** — jump capped 5–20; endpoints spaced ≥ `MIN_LADDER_GAP=6` so ladders distribute across the board (no overlapping pile).
 - [x] **Web polish** — title page → config → **loading overlay (progress bar)** → board; **per-step token animation** (`do_turn` returns a `move` breakdown); **threaded server** (fixes browser hang); `/api/quit` reset so New game / refresh behave; POST error-handling (no silent hangs).
-- ⚠️ **Tradeoff (documented):** exact-head makes snakes weak → shipped PPO ~level with Easy in bot-vs-bot sims (~42%); still beats humans. Retrain-for-exact-head optional (declined). See [training.md](training.md).
+- ⚠️ **Tradeoff (then):** exact-head made snakes weak → 14-dim PPO ~level with Easy in bot-vs-bot sims. Triggered the cunning rebuild below.
 
 ## Engine-driven web (no duplicated game logic)
 
@@ -74,3 +74,71 @@ Ranked by importance. P0 = breaks core premise or grader claims. P1 = real bugs.
 - [x] **Chess-style snake placement** — 🎯 button → click glowing HEAD → glowing affordable TAILs (from `/api/shop-options`) → confirm dialog (cost + projected points) → head→tail grow in player color → `/api/buy`.
 - [x] **Web bug fixes:** shop now actually opens (players weren't given `snake_count`); dice face shows the real rolled number; tile point values drawn on cells; **bomb + bankruptcy animation** (blast + spin to tile 0); robust `api()` error (no JSON-parse crash on stale server). Web port is **5000** (Flask).
 - Note: `ui/web/` (old stdlib UI) is now unused/legacy; `requirements.txt` includes `flask`, `flask-cors`.
+
+## Cunning PPO rebuild (latest)
+
+Triggered by user feedback that the 14-dim PPO was "too reserved — just waits
+and drops one snake late." User direction: "extra ruthless, master cunning
+expert that has sole purpose to horribly sabotage its enemies — very
+unpredictable, very calculating, restored stealing OK but no death-loop."
+
+- [x] **PPO observation 14 → 22 dim** (`encode_state`) — added bomb/ladder
+  lookahead, leader's distance to goal, combo availability flag, and the
+  agent's bankruptcy-immunity flag.
+- [x] **PPO actions 4 → 5** (`N_ACTIONS=5`) — added **`combo`** action that
+  places a snake whose **tail lands on a bomb tile** so the victim eats the
+  knockback AND the bomb damage.
+- [x] **`propose_combo`** added in `ai/expectimax.py` — picks the highest-
+  setback placement whose tail is a bomb, catch-optimal offset from the
+  leading opponent.
+- [x] **Cunning reward shaping** in `_compute_reward`:
+  - `+0.5 × opp_setback` (heavy sabotage reward)
+  - `+12.0` on a combo placement (MAXIMUM annoyance)
+  - `+4.0 + 0.3 × placed_setback` on any snake buy
+  - **`-1.0` anti-hoard** if the agent passes on buying while sitting on
+    >100 pts (kills the "one late snake" passive policy)
+  - `-50.0` real-bankruptcy penalty (unchanged)
+- [x] **Stochastic inference** (`ppo_decision`: `deterministic=False`) +
+  **`ent_coef=0.03`** in training → varied, unpredictable policy that mixes
+  patience, cheap pressure, big knockbacks, lurks, and combos.
+- [x] **`device="cpu"`** forced in PPO config — CPU is faster than the
+  low-utilization GPU path for this small MLP (SB3 even warns about it).
+- [x] **Point-stealing restored** (`game/engine.py` `_steal_points`,
+  `STEAL_FLAT=15`, `STEAL_PCT=0.30`) — only fires on player-owned snake
+  bites; bites by board terrain still don't steal.
+- [x] **Anti death-loop: bankruptcy-immunity cooldown**
+  (`game/models.py` `BANKRUPT_IMMUNITY_TURNS=6`, `Player.bankrupt_immune`).
+  After a bankruptcy, further losses clamp the wallet to 0 instead of
+  resetting position again for 6 of the player's own turns. Ticked down in
+  `engine.do_turn`.
+- [x] **Frozen self-play shape guard** in `build_training_env` — only adds
+  the existing `ai/ppo_model.zip` as a frozen opponent if its
+  `observation_space.shape == (22,)` and `action_space.n == N_ACTIONS`,
+  otherwise prints a warning and skips. Prevents `predict()` from crashing
+  mid-training on a legacy 14-dim/4-action backup.
+- [x] **Server PPO try/except per turn** (`server.py` `_ai_decision`) — if
+  `ppo_decision` raises (e.g. shape mismatch while a retrain is mid-write),
+  the Hard AI falls back to `expectimax_decision` for that turn so the game
+  doesn't crash.
+- [x] **Two-stage training recipe** documented in `training.md`: stage 1 = 3M
+  base (frozen self-play auto-skipped if shape mismatches), stage 2 = 1.5-2M
+  self-play polish (stage-1 model now joins the frozen pool).
+- [x] **`train_ppo` continuation fix** — original `train_ppo` always built a
+  fresh `PPO(...)` and overwrote `ai/ppo_model.zip` on save, so a "stage 2"
+  run was really a 2M-from-scratch run. First stage-2 attempt regressed
+  64%→52% WR vs Easy for exactly this reason (recovered from the manual
+  `ppo_model_backup.zip`). Patched `train_ppo` to **load and continue** from
+  the existing model when its shape matches (`PPO.load(..., env=vec_env)`,
+  `learn(reset_num_timesteps=False)`); falls back to a fresh PPO with a logged
+  reason otherwise. Multi-stage runs now actually accumulate steps.
+- [x] **Backup discipline documented** — always
+  `copy ai\ppo_model.zip ai\ppo_model_backup.zip` before a polish run so a
+  regression is recoverable with the reverse copy.
+- [x] **Eval (cunning model, 200 games each, stochastic):**
+  - vs Easy: **64%** WR, 4.18 snakes/game, 3.98 combos/game, 11.4 avg
+    setback, 1.6 steals → PPO/game, 0.30 PPO self-bankrupt/game.
+  - vs Strong: **62%** WR, 4.12 snakes/game, 4.00 combos/game, 10.9 avg
+    setback, 1.6 steals → PPO/game, 0.45 PPO self-bankrupt/game.
+  - Action mix vs Strong (5108 buys): combo 1755 > lurk 1598 > cheap 729 >
+    big 622 > (roll 1403 non-buy). No single action >35% → stochastic
+    policy working.

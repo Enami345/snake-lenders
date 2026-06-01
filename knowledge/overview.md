@@ -8,7 +8,7 @@ tail. Plays in the browser (web UI) with up to 4 players, any mix of humans/AI.
 
 **Course:** Introduction to Artificial Intelligence — PUP, BSCS 3-4, Group 10
 **Members:** Cabral · Caparas · Exconde · Rivera (repo owner: Geuel John Rivera)
-**Status:** Working. On branch `refactor/economy-ai-overhaul`.
+**Status:** Working. On branch `web-app`.
 
 ---
 
@@ -70,8 +70,12 @@ python main.py              # legacy Pygame UI
 # setup via flags (skip prompts):
 python main.py --web        # browser handles the setup screen
 python main.py --players 4 --humans 1 --difficulty hard      # pygame/console
-python main.py --train --steps 300000                        # (re)train PPO
+python main.py --train --steps 3000000                       # (re)train PPO base
 python main.py --phase 1                                     # board test
+
+# Two-stage cunning training (see knowledge/training.md):
+python -c "from ai.ppo_agent import train_ppo; train_ppo(3000000, opponent_pool=True)"  # stage 1
+python -c "from ai.ppo_agent import train_ppo; train_ppo(2000000, opponent_pool=True)"  # stage 2
 ```
 
 ---
@@ -100,12 +104,15 @@ Web flow: **title page → config → loading screen → board.** Config (or fla
   exactly on a snake head. Landing below it or jumping clean over = safe.
   - *Player snakes* = single-use traps; consumed on fire (re-placeable).
     **Owner immune to own snakes.**
-  - A bite just **slides you to the tail** — no point-stealing (removed for
-    fairness; was causing bankruptcy death-spirals).
+  - **Point-stealing on bite** (player-owned snakes): victim loses
+    `STEAL_FLAT=15 + 30%` of remaining points → to the snake's owner.
+    Restored to make the game stressful and self-fund the saboteur.
+- **Bankruptcy immunity:** after a bankruptcy, the player gets
+  `BANKRUPT_IMMUNITY_TURNS=6` turns where further losses **clamp the wallet to
+  0** instead of resetting again. Prevents steal/bomb death-loops.
 - **Economy:** scarce tile income (~4-14/turn); snake cost sub-linear
   (`2 × purchase_count × length^0.9`, min 12).
-- **Bombs** scale with board depth and can **bankrupt** you → reset to tile 0
-  (rare now, ~1 per 5 games for a passive player).
+- **Bombs** scale with board depth and can **bankrupt** you → reset to tile 0.
 - Max 3 active player snakes; head tiles 20-90; no occupied/ladder tiles; no
   chaining; no wall (run of adjacent heads ≤ 2).
 
@@ -115,14 +122,19 @@ Web flow: **title page → config → loading screen → board.** Config (or fla
 
 - **Easy = Expectimax**, deliberately weak (late, hesitant, hoards, cheap traps
   only). Beatable baseline.
-- **Hard = PPO**, 4-action strategy space (roll / cheap trap / save-for-big /
-  win-denial lurk). Beats human players in practice.
+- **Hard = PPO**, **5-action** strategy space (roll / cheap trap / save-for-big /
+  win-denial lurk / **combo = tail-on-bomb**). **22-dim** observation including
+  bomb/ladder lookahead, leader's distance to goal, combo availability, and the
+  agent's bankruptcy-immunity flag. **Stochastic inference** for unpredictable,
+  cunning play.
 - **You can mix difficulties** — choose how many AIs are Hard (rest Easy).
-- Shipped Hard model = **exact-head-trained, 2.5M steps, self-play pool**.
-  **Proven > Easy (~54-56%)** but doesn't dominate — exact-head snakes fire ~1/6
-  so dice cap the gap. The skill shows in *behavior*: Hard places ~50-tile
-  knockbacks + win-denial lurks; Easy only short cheap snakes (avg length 53 vs
-  7.5). See [training.md](training.md). Falls back to Expectimax if load fails.
+- Shipped Hard model = **cunning rebuild, 22-dim / 5-action, ~3M base + 2M
+  self-play stage-2**. Trained against an opponent pool {Easy, Strong heuristic,
+  frozen self-PPO snapshot} with sabotage-heavy reward shaping (heavy opponent-
+  setback reward, large combo bonus, anti-hoard penalty). Measured WR vs Easy
+  ~64%, vs Strong ~62%, with ~4 snakes/game and ~4 combos/game vs the prior
+  reserved ~1-2 snakes / 0 combos. See [training.md](training.md). Server falls
+  back to Expectimax per turn if PPO inference fails (e.g. shape mismatch).
 
 See [architecture.md](architecture.md) for the code map, [status.md](status.md)
 for current state, [training.md](training.md) for AI training + measured strength,

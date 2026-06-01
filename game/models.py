@@ -6,9 +6,9 @@ Defines all core data structures used throughout the game.
 from dataclasses import dataclass, field
 from typing import Optional
 
-# Turns of bankruptcy immunity granted right after a player goes bankrupt.
-# Anti-loop: a second hit during this window clamps the wallet to 0 instead
-# of resetting position again, giving the player room to escape the trap zone.
+# Turns of bankruptcy immunity right after a player goes bankrupt. Further
+# losses during this window clamp the wallet to 0 instead of resetting
+# position again — prevents the steal/bomb death-loop.
 BANKRUPT_IMMUNITY_TURNS = 6
 
 
@@ -47,9 +47,9 @@ class Player:
     is_ai: bool = False
     ai_difficulty: Optional[str] = None  # 'easy' or 'hard'
     bankrupt_count: int = 0
-    # Anti-death-loop: after a bankruptcy, the player has a few turns of
-    # bankruptcy immunity — losses still hurt the wallet but won't reset
-    # the player to tile 0 again. Decremented after each of the player's turns.
+    # Anti-death-loop: after a bankruptcy the player gets a few turns where
+    # further losses clamp the wallet to 0 instead of resetting position
+    # again. Ticked down at the end of each of the player's own turns.
     bankrupt_immune: int = 0
 
     @property
@@ -64,10 +64,9 @@ class Player:
         self.points += amount
 
     def deduct_points(self, amount: int) -> bool:
-        """Subtract `amount`. Going below 0 triggers bankruptcy UNLESS the
-        player is in the post-bankruptcy immunity window — in that case the
-        wallet just clamps at 0 (no second reset). Returns False if a real
-        bankruptcy fired."""
+        """Subtract amount. Going below zero triggers bankruptcy UNLESS the
+        player is in the post-bankruptcy immunity window — there the wallet
+        clamps at 0 (no second reset). Returns False if a real bankruptcy fired."""
         self.points -= amount
         if self.points < 0:
             if self.bankrupt_immune > 0:
@@ -81,8 +80,8 @@ class Player:
         return True
 
     def go_bankrupt(self):
-        """Bankruptcy resets the player to tile 0 with zero points and starts
-        a short immunity window (so a single bad spot can't loop reset)."""
+        """Bankruptcy sends the player back to start, wipes the wallet, and
+        starts a short immunity window so a single bad spot can't loop."""
         self.position = 0
         self.points = 0
         self.bankrupt_count += 1
