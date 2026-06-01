@@ -6,6 +6,7 @@ Ensures the board is solvable with an average path of at least 10 turns.
 
 import random
 from game.models import Snake, Ladder, BoardState, Player
+from game.log import gprint
 
 
 NUM_TILES       = 100
@@ -14,38 +15,49 @@ NUM_INIT_SNAKES = 4
 NUM_BOMBS       = 5
 MIN_AVG_TURNS   = 10
 MAX_RETRIES     = 200
+MIN_LADDER_GAP  = 6     # min tile spacing between ladder endpoints (anti-clutter)
 BOMB_DEDUCTION  = 30
-BASE_TILE_VALUE = 10
+BASE_TILE_VALUE = 3     # scarce income — points must be managed, not hoarded
 
 
 def generate_tile_values(seed: int) -> dict:
     rng = random.Random(seed)
     tiles = {}
     for tile in range(1, NUM_TILES + 1):
-        base = BASE_TILE_VALUE + (tile // 10) * 5
-        variance = rng.randint(-5, 15)
-        tiles[tile] = max(BASE_TILE_VALUE, base + variance)
-    tiles[100] = 200
+        # Modest, rising income (~4-14/turn): points accumulate enough to
+        # fund snakes, but a snake purchase is still a real sacrifice and a
+        # bomb can threaten bankruptcy when you're low.
+        base = (BASE_TILE_VALUE + 1) + (tile // 15)
+        variance = rng.randint(0, 4)
+        tiles[tile] = max(1, base + variance)
+    tiles[100] = 40    # modest finish bonus (winning doesn't need points)
     return tiles
 
 
 def _place_ladders(rng: random.Random, forbidden: set) -> list:
-    ladders = []
-    attempts = 0
-    while len(ladders) < NUM_LADDERS and attempts < 1000:
+    ladders   = []
+    endpoints = []          # every bottom/top placed so far (for spacing)
+    attempts  = 0
+    while len(ladders) < NUM_LADDERS and attempts < 2000:
         attempts += 1
         bottom = rng.randint(2, 80)
-        jump   = rng.randint(10, 30)
+        jump   = rng.randint(5, 20)   # cap climbs so no absurd 42->90 leaps
         top    = bottom + jump
 
         if top >= 100:
             continue
         if bottom in forbidden or top in forbidden:
             continue
+        # Spread them out: keep every endpoint at least MIN_LADDER_GAP tiles
+        # from existing ladder endpoints so they don't clutter / overlap.
+        if any(abs(bottom - e) < MIN_LADDER_GAP or abs(top - e) < MIN_LADDER_GAP
+               for e in endpoints):
+            continue
 
         ladders.append(Ladder(bottom=bottom, top=top))
         forbidden.add(bottom)
         forbidden.add(top)
+        endpoints.extend((bottom, top))
 
     return ladders
 
@@ -145,7 +157,7 @@ def generate_board(seed=None, players=None) -> BoardState:
             Player(player_id=1, name="Player 2"),
         ]
 
-    print(f"[Board] Generating with seed={seed}...")
+    gprint(f"[Board] Generating with seed={seed}...")
 
     for attempt in range(1, MAX_RETRIES + 1):
         rng = random.Random(seed + attempt)
@@ -161,8 +173,8 @@ def generate_board(seed=None, players=None) -> BoardState:
         if _board_is_valid(ladders, snakes):
             tiles    = generate_tile_values(seed + attempt)
             expected = bfs_expected_turns(ladders, snakes)
-            print(f"[Board] Valid! Attempt {attempt}, "
-                  f"expected turns: {expected:.1f}")
+            gprint(f"[Board] Valid! Attempt {attempt}, "
+                   f"expected turns: {expected:.1f}")
             return BoardState(
                 tiles=tiles,
                 ladders=ladders,

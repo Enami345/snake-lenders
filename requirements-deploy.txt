@@ -1,0 +1,8 @@
+# Deploy-only requirements — pygame excluded (no display on HuggingFace Spaces).
+# Pygame is only needed for the legacy Pygame UI (python main.py with no flags),
+# which is unused on the server. All web + AI functionality works without it.
+stable-baselines3>=2.0.0
+gymnasium>=0.29.0
+numpy>=1.24.0
+flask>=3.0.0
+flask-cors>=4.0.0

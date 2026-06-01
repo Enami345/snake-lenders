@@ -6,6 +6,11 @@ Defines all core data structures used throughout the game.
 from dataclasses import dataclass, field
 from typing import Optional
 
+# Turns of bankruptcy immunity right after a player goes bankrupt. Further
+# losses during this window clamp the wallet to 0 instead of resetting
+# position again — prevents the steal/bomb death-loop.
+BANKRUPT_IMMUNITY_TURNS = 6
+
 
 @dataclass
 class Snake:
@@ -42,6 +47,10 @@ class Player:
     is_ai: bool = False
     ai_difficulty: Optional[str] = None  # 'easy' or 'hard'
     bankrupt_count: int = 0
+    # Anti-death-loop: after a bankruptcy the player gets a few turns where
+    # further losses clamp the wallet to 0 instead of resetting position
+    # again. Ticked down at the end of each of the player's own turns.
+    bankrupt_immune: int = 0
 
     @property
     def snake_count(self) -> int:
@@ -55,19 +64,30 @@ class Player:
         self.points += amount
 
     def deduct_points(self, amount: int) -> bool:
-        """Returns False if player goes bankrupt."""
+        """Subtract amount. Going below zero triggers bankruptcy UNLESS the
+        player is in the post-bankruptcy immunity window — there the wallet
+        clamps at 0 (no second reset). Returns False if a real bankruptcy fired."""
         self.points -= amount
         if self.points < 0:
+            if self.bankrupt_immune > 0:
+                self.points = 0
+                from game.log import gprint
+                gprint(f"  🛡️ {self.name} would have bankrupted but is in "
+                       f"recovery — wallet clamped to 0.")
+                return False
             self.go_bankrupt()
             return False
         return True
 
     def go_bankrupt(self):
-        """Reset player to start due to bankruptcy."""
-        self.position = 0        # Back to off the board
+        """Bankruptcy sends the player back to start, wipes the wallet, and
+        starts a short immunity window so a single bad spot can't loop."""
+        self.position = 0
         self.points = 0
         self.bankrupt_count += 1
-        print(f"  [BANKRUPT] {self.name} went bankrupt and returns to tile 0!")
+        self.bankrupt_immune = BANKRUPT_IMMUNITY_TURNS
+        from game.log import gprint
+        gprint(f"  [BANKRUPT] {self.name} went bankrupt — back to tile 0!")
 
 
 @dataclass

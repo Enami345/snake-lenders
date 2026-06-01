@@ -7,6 +7,39 @@ import random
 from game.models import BoardState, Player, Snake
 from game.board import BOMB_DEDUCTION
 
+# Bombs: a flat hit that grows with board depth (deeper = nastier).
+# Big enough to bankrupt a low-on-points player (→ reset to tile 0), but
+# flat (not %-of-wealth) so points can still accumulate for the economy.
+BOMB_BASE  = 18
+BOMB_DEPTH = 6      # +1 point of damage per this many tiles of depth
+
+
+# ── Economy tuning (manuscript: exponential pricing) ────────────────
+# Cost = BASE_SNAKE_PRICE x purchase_count x length^PRICE_ALPHA
+# Short snakes cheap; long snakes scale up fast. Price rises each
+# purchase. PRICE_ALPHA is the FIX-2 tuning knob (raise if AI always
+# buys all 3 — see acceptance sim).
+BASE_SNAKE_PRICE = 2
+PRICE_ALPHA      = 0.9   # sub-linear: long, devastating snakes stay affordable
+MIN_SNAKE_COST   = 12    # so you can SAVE UP for a big knockback (strategy)
+MAX_SNAKE_HEAD   = 90    # player-placed snakes (board snakes may go higher)
+
+# Snakes bite ONLY on landing exactly on the head tile. STRIKE_ZONE adds
+# this many tiles below the head to the bite range (0 = exact-head only;
+# the game's chosen rule). Larger values make snakes fire more often (and
+# the AI much stronger) at the cost of the clean "step on the head" feel.
+STRIKE_ZONE = 0
+
+# Anti-softlock / anti-wall: don't let snake heads form a long run of
+# adjacent tiles (overlapping strike ranges) that gets too sticky to pass.
+MAX_HEAD_RUN = 2
+
+# A player-placed snake also ROBS its victim on a bite — flat + slice of
+# their wallet, transferred to the snake's owner. Death-loop is prevented
+# by the bankruptcy-immunity window in Player.deduct_points.
+STEAL_FLAT = 15
+STEAL_PCT  = 0.30
+
 
 def roll_dice() -> int:
     return random.randint(1, 6)
@@ -14,13 +47,32 @@ def roll_dice() -> int:
 
 def calculate_snake_cost(player: Player, head: int, tail: int) -> int:
     """
-    Cost = length x 10 x multiplier
-    1st snake = 1.0x, 2nd = 1.5x, 3rd = 2.0x
+    Manuscript exponential pricing:
+        Cost = BASE_SNAKE_PRICE x purchase_count x length^PRICE_ALPHA
+    purchase_count = which snake this is (1st, 2nd, 3rd) so each
+    additional snake costs more.
     """
-    length     = head - tail
-    multiplier = 1.0 + (player.snake_count * 0.5)
-    cost       = int(length * 10 * multiplier)
-    return max(cost, 30)
+    length         = head - tail
+    purchase_count = player.snake_count + 1
+    cost           = int(BASE_SNAKE_PRICE * purchase_count
+                         * (length ** PRICE_ALPHA))
+    return max(cost, MIN_SNAKE_COST)
+
+
+def _head_run_length(existing_heads: set, new_head: int) -> int:
+    """
+    Length of the run of consecutive snake-head tiles that `new_head`
+    would belong to, given the existing head tiles. Used to stop players
+    from building an impassable wall of adjacent heads.
+    """
+    heads = existing_heads | {new_head}
+    left = new_head - 1
+    while left in heads:
+        left -= 1
+    right = new_head + 1
+    while right in heads:
+        right += 1
+    return right - left - 1
 
 
 def can_place_snake(board: BoardState, buyer: Player,
@@ -33,8 +85,8 @@ def can_place_snake(board: BoardState, buyer: Player,
         return False, "Head must be higher than tail."
     if not (1 <= tail <= 100 and 1 <= head <= 100):
         return False, "Tiles must be between 1 and 100."
-    if head > 80:
-        return False, "Snake head cannot be placed above tile 80."
+    if head > MAX_SNAKE_HEAD:
+        return False, f"Snake head cannot be placed above tile {MAX_SNAKE_HEAD}."
     if head in board.occupied_tiles():
         return False, f"Tile {head} is occupied by a player."
     if tail in board.occupied_tiles():
@@ -58,6 +110,12 @@ def can_place_snake(board: BoardState, buyer: Player,
         return False, (f"Tile {tail} is the head of another snake. "
                        f"Cannot chain snakes.")
 
+    # Anti-softlock: don't let this head extend a run of adjacent snake
+    # heads beyond MAX_HEAD_RUN (would risk an impassable wall).
+    if _head_run_length(snake_heads, head) > MAX_HEAD_RUN:
+        return False, (f"Tile {head} would create too long a wall of "
+                       f"snake heads. Leave a gap so players can pass.")
+
     cost = calculate_snake_cost(buyer, head, tail)
     if buyer.points < cost:
         return False, f"Not enough points. Need {cost}, have {buyer.points}."
@@ -67,20 +125,91 @@ def can_place_snake(board: BoardState, buyer: Player,
 
 # ── Movement ──────────────────────────────────────────────────────────────────
 
+def _consume_snake(board: BoardState, snake: Snake) -> None:
+    """
+    Player-placed snakes are single-use: once they fire they're removed,
+    freeing a slot so the owner can re-earn points and place another.
+    Board snakes (owner_id == -1) are fixed terrain and persist.
+    """
+    if snake.owner_id < 0:
+        return
+    if snake in board.snakes:
+        board.snakes.remove(snake)
+    for p in board.players:
+        if p.player_id == snake.owner_id and snake in p.snakes_owned:
+            p.snakes_owned.remove(snake)
+            break
+
+
+def _striking_snake(board: BoardState, tile: int, mover_id: int = -99):
+    """
+    Return a snake whose strike range covers `tile` for the moving player.
+
+    Player-placed snakes (owner_id >= 0) are active traps with a strike
+    range: they bite on the head OR the STRIKE_ZONE tiles just below it,
+    so a well-placed trap reliably catches a passing opponent (~50%).
+    Board snakes (owner_id == -1) are fixed terrain and bite on the exact
+    head only — keeping the base board from dragging games out.
+
+    Owner immunity: your own snakes never bite you (otherwise you'd walk
+    into traps you set ahead of an opponent you're chasing).
+
+    Landing above a head (a clean jump over) is always safe. Picks the
+    snake with the highest head (biggest setback) if several overlap.
+    """
+    best = None
+    for s in board.snakes:
+        if s.owner_id == mover_id:
+            continue  # own trap — immune
+        zone = STRIKE_ZONE if s.owner_id >= 0 else 0
+        if s.head - zone <= tile <= s.head:
+            if best is None or s.head > best.head:
+                best = s
+    return best
+
+
 def _apply_snakes(board: BoardState, player: Player,
                   logs: list) -> None:
     """
-    Keep sliding the player down chained snakes until
-    they land on a tile with no snake head.
+    Slide the player down if they landed in a snake's strike range (head
+    or the STRIKE_ZONE tiles just below it). Jumping clean over a head is
+    safe. Player-placed snakes are consumed after biting (single-use).
+    Each slide moves strictly downward, so the loop always terminates.
     """
     while True:
-        snake = board.get_snake_at(player.position)
+        snake = _striking_snake(board, player.position, player.player_id)
         if snake:
-            logs.append(f"  🐍 Snake! {player.name} slides "
-                        f"from {player.position} to {snake.tail}")
+            logs.append(f"  🐍 Snake! {player.name} landed on snake "
+                        f"{snake.head} and slides to {snake.tail}")
             player.position = snake.tail
+            _steal_points(board, player, snake, logs)
+            _consume_snake(board, snake)
         else:
             break
+
+
+def _steal_points(board: BoardState, victim: Player,
+                  snake: Snake, logs: list) -> None:
+    """Player-placed snake robs its victim, paying the owner. Board snakes
+    don't steal. Bankruptcy from theft is allowed (resets to tile 0); the
+    cooldown in Player.deduct_points prevents back-to-back resets."""
+    if snake.owner_id < 0:
+        return
+    pre_bank = victim.bankrupt_count
+    pre_pts  = max(victim.points, 0)
+    if pre_pts <= 0:
+        return
+    amount = STEAL_FLAT + int(pre_pts * STEAL_PCT)
+    taken  = min(amount, pre_pts)
+    victim.deduct_points(amount)               # may bankrupt (with cooldown)
+    owner = next((p for p in board.players
+                  if p.player_id == snake.owner_id), None)
+    if owner is not None and owner is not victim and taken > 0:
+        owner.add_points(taken)
+        logs.append(f"  💸 snake {snake.head} robs {taken} pts from "
+                    f"{victim.name} → {owner.name}")
+    if victim.bankrupt_count > pre_bank:
+        logs.append(f"  ☠️ {victim.name} went BANKRUPT from the theft — reset to tile 0!")
 
 
 def _apply_ladders(board: BoardState, player: Player,
@@ -105,53 +234,35 @@ def move_player(board: BoardState, player: Player,
     Move a player by roll amount, apply snakes/ladders/bombs.
 
     Overshooting tile 100:
-        If position + roll > 100, the player bounces back.
-        e.g. tile 98 + roll 3 = would be 101 → bounces to 99.
+        If position + roll > 100, the move is invalid — the player
+        stays in place. An exact roll is required to land on tile 100.
+        e.g. tile 97 + roll 5 = would be 102 → invalid, stays at 97.
 
     Players start at tile 0 — first roll enters the board.
     """
     logs    = []
     old_pos = player.position
 
-    # ── Calculate new position with bounce-back ───────────────────
+    # ── Overshoot: invalid move, stay put (exact roll needed) ─────
     raw = player.position + roll
     if raw > 100:
-        # Bounce back from tile 100
-        overshoot      = raw - 100
-        new_pos        = 100 - overshoot
-        bounce_message = (f"{player.name} rolled a {roll} "
-                          f"— overshoots! Bounces back to tile {new_pos}")
-    else:
-        new_pos        = raw
-        bounce_message = None
-
-    # ── Entering the board from tile 0 ────────────────────────────
-    if old_pos == 0:
-        player.position = new_pos
-        if bounce_message:
-            logs.append(bounce_message)
-        else:
-            logs.append(f"{player.name} rolled a {roll} "
-                        f"— enters the board at tile {new_pos}")
-
-        # No ladder/snake check on very first entry
-        # (snake heads start at tile 20+ so this is fine)
-        tile_pts = board.tiles.get(player.position, 10)
-        player.add_points(tile_pts)
-        logs.append(f"  💰 Earned {tile_pts} points "
-                    f"— total: {player.points}")
+        logs.append(f"{player.name} rolled a {roll} "
+                    f"— overshoots tile 100! Move invalid, stays at "
+                    f"{old_pos}. (Exact roll needed to win.)")
         return logs
 
-    # ── Normal movement ───────────────────────────────────────────
-    if bounce_message:
-        logs.append(bounce_message)
+    new_pos = raw
+    player.position = new_pos
+
+    if old_pos == 0:
+        logs.append(f"{player.name} rolled a {roll} "
+                    f"— enters the board at tile {new_pos}")
     else:
         logs.append(f"{player.name} rolled a {roll} "
                     f"— moves from {old_pos} to {new_pos}")
 
-    player.position = new_pos
-
-    # Apply ladder first, then snake (order matters)
+    # Exact-landing triggers (applied on entry too): climb a ladder
+    # bottom, slide on a snake head. Jumping over a head is safe.
     _apply_ladders(board, player, logs)
     _apply_snakes(board, player, logs)
 
@@ -161,12 +272,15 @@ def move_player(board: BoardState, player: Player,
     logs.append(f"  💰 Earned {tile_pts} points "
                 f"— total: {player.points}")
 
-    # Check bomb
+    # Check bomb — flat hit scaling with depth; can trigger bankruptcy
     if board.is_bomb(player.position):
-        player.deduct_points(BOMB_DEDUCTION)
-        logs.append(f"  💣 Bomb! {player.name} loses "
-                    f"{BOMB_DEDUCTION} points "
-                    f"— total: {player.points}")
+        loss = BOMB_BASE + player.position // BOMB_DEPTH
+        before = player.points
+        solvent = player.deduct_points(loss)
+        logs.append(f"  💣 Bomb! {player.name} loses {loss} points "
+                    f"(had {before}) — total: {player.points}")
+        if not solvent:
+            logs.append(f"  ☠️ {player.name} went BANKRUPT — reset to tile 0!")
 
     return logs
 
@@ -217,16 +331,28 @@ def do_turn(board: BoardState, shop_decision=None) -> dict:
             bought = success
 
     # Roll and move
+    from_pos  = player.position
     roll      = roll_dice()
     move_logs = move_player(board, player, roll)
     logs.extend(move_logs)
+
+    # Move breakdown for UI animation: walk from_pos → landing (dice), then
+    # any jump to final (ladder climb / snake slide / bankruptcy reset).
+    landing = from_pos + roll if from_pos + roll <= 100 else from_pos
+    move = {"player_id": player.player_id, "name": player.name,
+            "roll": roll, "from": from_pos, "landing": landing,
+            "final": player.position}
+
+    # Tick this player's bankruptcy-immunity window (death-loop guard).
+    if player.bankrupt_immune > 0:
+        player.bankrupt_immune -= 1
 
     # Check win
     winner = check_winner(board)
     if winner:
         logs.append(f"\n🏆 {winner.name} wins the game!")
-        return {"logs": logs, "winner": winner, "bought": bought}
+        return {"logs": logs, "winner": winner, "bought": bought, "move": move}
 
     # Advance turn
     board.next_turn()
-    return {"logs": logs, "winner": None, "bought": bought}
+    return {"logs": logs, "winner": None, "bought": bought, "move": move}

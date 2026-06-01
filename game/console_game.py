@@ -84,51 +84,13 @@ def print_status(board):
     print("─" * 45)
 
 
-def play_game(mode="hvh", use_hard_ai=False, seed=None):
-    """
-    mode options:
-        'hvh'   = Human vs Human
-        'hvai'  = Human vs AI
-        'aivai' = Easy AI vs Hard AI
-    """
+def play_game(board, ppo_model=None):
+    """Run the terminal game loop on a pre-built board (any mix of human
+    and AI players, set up by the caller)."""
     print("\n" + "═" * 50)
     print("   🐍  SNAKES & LENDERS  🐍")
     print("═" * 50)
 
-    # ── Build player list based on mode ──────────────────────────
-    if mode == "hvh":
-        players = [
-            Player(0, "Alice"),
-            Player(1, "Bob"),
-        ]
-    elif mode == "hvai":
-        diff = "hard" if use_hard_ai else "easy"
-        label = "Hard AI" if use_hard_ai else "Easy AI"
-        players = [
-            Player(0, "You"),
-            Player(1, label, is_ai=True, ai_difficulty=diff),
-        ]
-    elif mode == "aivai":
-        players = [
-            Player(0, "Easy AI", is_ai=True, ai_difficulty="easy"),
-            Player(1, "Hard AI", is_ai=True, ai_difficulty="hard"),
-        ]
-    else:
-        raise ValueError(f"Unknown mode: {mode}")
-
-    # ── Load PPO model if needed ──────────────────────────────────
-    ppo_model = None
-    needs_ppo = any(p.ai_difficulty == "hard" for p in players)
-    if needs_ppo:
-        try:
-            from ai.ppo_agent import load_ppo_model
-            ppo_model = load_ppo_model()
-            print("[PPO] Hard AI model loaded successfully.")
-        except FileNotFoundError as e:
-            print(f"[PPO] Warning: {e}")
-            print("[PPO] Hard AI will use Expectimax as fallback.")
-
-    board = generate_board(seed=seed, players=players)
     print_board(board)
     print("Game start! First to tile 100 wins.\n")
 
