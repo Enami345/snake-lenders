@@ -158,6 +158,25 @@ sitting. Immunity cooldown is biting: self-bankruptcy stays under 0.5/game.
   gets loaded by mistake, the Hard AI falls back to Expectimax per turn rather
   than crashing the game.
 
+## Stage-2 retrain verdict (2026-06-01)
+
+Ran 2M true continuation (patch working; counter started at 3M → ended at 5M).
+Eval showed **marginal / wash result**:
+
+| | Stage-1 (3M backup) | Stage-2 (5M) |
+|---|---|---|
+| WR vs Easy | 54.5% | **58.0%** (+3.5pp) |
+| WR vs Strong | 60.0% | **61.5%** (+1.5pp) |
+| H2H 300g | **53.7%** | 46.3% (−7.4pp) |
+| Avg setback | **11.0 tiles** | 8.7 tiles |
+| Top actions | roll / cheap / big | **lurk / combo** (spammer shift) |
+
+Stage-2 shifted toward lurk+combo spam, away from big snakes. Loses H2H to
+stage-1 and places shorter snakes. "Spammer vs sniper" behavioral tradeoff.
+Decision: **ship stage-1 (3M)** as primary — better H2H + longer setbacks.
+Stage-2 vs-bot gain within noise (±3-4pp at 200g). Stage-2 stored as new
+`ppo_model_backup.zip` for reference.
+
 ## Lessons learned (2026-05/06)
 
 - **Always back up before a polish run.** The first stage-2 attempt was a

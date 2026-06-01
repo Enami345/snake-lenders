@@ -42,9 +42,15 @@ training recipe documented.
 
 - All P0 + P1 done; P2 done bar 2 intentional skips (manuscript=PDF, full PPO
   per-tile decoupling).
-- Tests pass; all modules import; web API smoke-tested (new/turn/state/quit).
+- Tests pass (14/14); all modules import; web API smoke-tested.
 - Cunning PPO eval: WR 64% vs Easy, 62% vs Strong; ~4 snakes/game; ~4
   combos/game; PPO self-bankrupt 0.30-0.45/game (immunity working).
+- CSS root bug fixed (unclosed `@media` trapped all rules after line 1446).
+- Confirm-snake modal, replay bar UI fixed; victory stats now tracked from
+  engine logs; in-game rules text updated (steal, immunity, Hard AI desc).
+- No-cache Flask headers so CSS/JS edits show on normal reload.
+- Graphify skill installed (`graphifyy`); set `ANTHROPIC_API_KEY` then run
+  `graphify . --backend claude` for interactive codebase graph.
 
 ---
 

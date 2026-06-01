@@ -1,10 +1,28 @@
-# Changes — `web-app` branch (for the team)
+# Changes — `refactor/economy-ai-overhaul` branch (for the team)
 
-Heads up team — this branch ships a major AI rebuild on top of the earlier
-gameplay/web overhaul. Read this before you pull so the new behavior doesn't
-surprise you.
+Heads up team — this branch ships a major AI rebuild + web UI polish on top of
+the earlier gameplay/web overhaul. Read this before you pull.
 
-## Newest — Cunning PPO rebuild
+## Newest — Web UI polish + bug fixes
+
+- **CSS root bug fixed** — an unclosed `@media (max-width: 480px)` was silently
+  trapping every CSS rule after line 1446 (confirm-snake overrides, vstat-card
+  styles, replay rules, animations) so they never applied on desktop. Closed it.
+- **Confirm Snake modal** — floats at bottom-center, transparent backdrop (board
+  stays visible), compact 320px card with thin divider rows and stacked buttons.
+  `✦ Confirm Snake` / `✓ Buy & Place` / `↺ Pick again` icon labels.
+- **Replay bar** — removed duplicate rule block overriding the full-width bar
+  with a narrow 420px card. Now `position:fixed bottom:24px` centered — no
+  more layout bleed / "black half-panel."
+- **Victory stats** — all stats (bittenCount, bankruptCount, laddersClimbed,
+  bombsHit, turnsTaken, pointsStolen) now tracked by parsing engine turn logs
+  each turn. Previously only human snakesPlaced incremented; all others were 0.
+- **No-cache server** — `server.py` now sends `Cache-Control: no-store` on all
+  responses so CSS/JS edits land on a normal browser reload.
+- **In-game rules updated** — steal mechanic, 6-turn immunity, Hard AI 5-strategy
+  description added to Quick Rules (lobby) and How to Play modal.
+
+## Previous — Cunning PPO rebuild
 
 The 14-dim PPO was "too reserved." Rebuilt it as a **22-dim / 5-action cunning
 agent** with restored point-stealing and a bankruptcy-immunity cooldown.

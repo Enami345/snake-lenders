@@ -134,7 +134,7 @@ unpredictable, very calculating, restored stealing OK but no death-loop."
 - [x] **Backup discipline documented** — always
   `copy ai\ppo_model.zip ai\ppo_model_backup.zip` before a polish run so a
   regression is recoverable with the reverse copy.
-- [x] **Eval (cunning model, 200 games each, stochastic):**
+- [x] **Eval (cunning model, 200 games each, stochastic, stage-1 3M base):**
   - vs Easy: **64%** WR, 4.18 snakes/game, 3.98 combos/game, 11.4 avg
     setback, 1.6 steals → PPO/game, 0.30 PPO self-bankrupt/game.
   - vs Strong: **62%** WR, 4.12 snakes/game, 4.00 combos/game, 10.9 avg
@@ -142,3 +142,40 @@ unpredictable, very calculating, restored stealing OK but no death-loop."
   - Action mix vs Strong (5108 buys): combo 1755 > lurk 1598 > cheap 729 >
     big 622 > (roll 1403 non-buy). No single action >35% → stochastic
     policy working.
+
+## Web UI Polish + Bug Fixes (post-cunning rebuild)
+
+- [x] **CSS root cause fixed** — unclosed `@media (max-width: 480px)` at line
+  1446 silently trapped every rule below it (confirm-snake overrides, vstat
+  styles, animations, replay rules). Closed the media query after `.board-frame`.
+  No rule changes — just un-trapped everything that was already written.
+- [x] **Confirm Snake modal** — rebuilt as floating 320px card at bottom-center
+  with transparent backdrop (board visible/clickable behind). `#modal-snake-confirm`
+  ID-scoped CSS so nothing overrides it. Thin divider rows, vertical button stack,
+  `✦ Confirm Snake` / `✓ Buy & Place` / `↺ Pick again` icons.
+- [x] **Replay bar** — removed duplicate `.replay-panel` block (was overriding
+  the proper full-width bar with a narrow 420px card). Rewritten as
+  `position:fixed bottom:24px` centered bar so it never bleeds into the board
+  layout and causes the "black half-panel" dead space.
+- [x] **Victory stats now tracked** — parse engine turn logs each
+  `executeTurn()` to count `bittenCount`, `bankruptCount`, `laddersClimbed`,
+  `bombsHit`, `turnsTaken`, `pointsStolen` (AI-placed `snakesPlaced` also from
+  `🛒` log). Previously only human `snakesPlaced` incremented; all others
+  stayed 0.
+- [x] **No-cache Flask headers** — `SEND_FILE_MAX_AGE_DEFAULT=0` +
+  `after_request` hook sends `Cache-Control: no-store` so CSS/JS edits land on
+  a normal browser reload without needing DevTools cache bypass.
+- [x] **In-game rules text updated** — Quick Rules (lobby) + How to Play modal
+  updated: steal mechanic explained (flat 15 + 30%, owner gets points), 6-turn
+  immunity cooldown added, Hard AI description updated (5 strategies, combo
+  strikes, stochastic timing, point theft on bite). Removed outdated
+  "no point-stealing" line.
+- [x] **Stage-2 retrain (5M total continuation)** — `train_ppo` continuation
+  patch working; stage-2 ran 2M on top of 3M base. Eval showed marginal
+  improvement (WR +3.5pp vs Easy, +1.5pp vs Strong) but H2H lost to stage-1
+  (-7.4pp, shorter avg setback 8.7 vs 11.0). Stage-1 backup restored as
+  primary; stage-2 noted as "spammer vs sniper" behavioral tradeoff.
+- [x] **knowledge/graph.md** — 6 Mermaid knowledge graphs added (branch
+  lineage, code modules, feature→implementation, training pipeline, doc topic
+  map, contributors). Graphify skill installed for Windows (`graphifyy`);
+  requires `ANTHROPIC_API_KEY` env var to build interactive `graphify-out/graph.html`.
