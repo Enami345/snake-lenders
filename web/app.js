@@ -2531,7 +2531,28 @@ async function executeTurn() {
     if (v && v.position > 0) triggerFloatingNumber(v.position, `−${amt}`, false);
     if (o && o.position > 0) triggerFloatingNumber(o.position, `+${amt}`, true);
     playSFX("steal");
+    if (o && gameSession.stats[o.id]) {
+      gameSession.stats[o.id].pointsStolen = (gameSession.stats[o.id].pointsStolen || 0) + amt;
+    }
   });
+
+  // Per-turn stats from engine logs (covers AI snakes + every other event).
+  // Human-placed snakes are already counted in commitSnakePurchase (the
+  // "🛒" log only fires for AI shop moves via do_turn).
+  const _statsByName = new Map(gameSession.players.map(p => [p.name.trim(), p]));
+  const _bump = (name, field) => {
+    const pl = _statsByName.get((name || "").trim());
+    if (pl && gameSession.stats[pl.id]) gameSession.stats[pl.id][field]++;
+  };
+  (res.logs || []).forEach(line => {
+    let m;
+    if ((m = line.match(/🛒\s+(.+?)\s+placed a snake/)))           _bump(m[1], "snakesPlaced");
+    else if ((m = line.match(/🐍\s+Snake!\s+(.+?)\s+landed on/)))  _bump(m[1], "bittenCount");
+    else if ((m = line.match(/☠️\s+(.+?)\s+went BANKRUPT/)))        _bump(m[1], "bankruptCount");
+    else if ((m = line.match(/🪜\s+Ladder!\s+(.+?)\s+climbs/)))    _bump(m[1], "laddersClimbed");
+    else if ((m = line.match(/💣\s+Bomb!\s+(.+?)\s+loses/)))        _bump(m[1], "bombsHit");
+  });
+  if (gameSession.stats[moverId]) gameSession.stats[moverId].turnsTaken++;
 
   if (res.winner) {
     const wp = gameSession.players.find(p => p.name === res.winner)

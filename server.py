@@ -28,6 +28,19 @@ from ai.ppo_agent import load_ppo_model, ppo_decision
 app = Flask(__name__, static_folder="web")
 CORS(app)
 
+# Disable static-file caching so CSS/JS edits show up on reload without
+# the browser hanging on to a stale copy (this bit us multiple times when
+# the cunning PPO + UI work was iterating fast).
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+
+
+@app.after_request
+def _no_cache(response):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
 # Load the PPO model once at startup (Hard AI). Falls back to Expectimax.
 PPO_MODEL = None
 try:
