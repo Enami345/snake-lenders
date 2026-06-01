@@ -103,9 +103,9 @@
             <h4>Quick Rules</h4>
             <ul>
               <li><strong>Exact Win:</strong> Stay put if you overshoot tile 100.</li>
-              <li><strong>Economy:</strong> Single-use traps cost more per purchase.</li>
-              <li><strong>Traps:</strong> Land exactly on a snake head to slide to its tail.</li>
-              <li><strong>Bankruptcy:</strong> Under 0 pts resets you to tile 0.</li>
+              <li><strong>Economy:</strong> Single-use traps cost more per purchase. Save up for big hits.</li>
+              <li><strong>Traps:</strong> Land exactly on a snake head → slide to tail + lose points to the owner.</li>
+              <li><strong>Bankruptcy:</strong> Under 0 pts resets you to tile 0. 6-turn immunity prevents immediate repeats.</li>
             </ul>
           </div>
         </div>
@@ -412,26 +412,29 @@
           <li><strong>Anti-Wall:</strong> You cannot place a snake that would extend a consecutive run of adjacent snake heads past 2.</li>
         </ul>
 
-        <h3>Snake Bites &amp; Immunity</h3>
+        <h3>Snake Bites &amp; Point Theft</h3>
         <ul>
           <li>Snakes bite only when you land <strong>exactly on the head tile</strong>. Landing below it or jumping clean over is safe.</li>
-          <li><strong>Immunity:</strong> you are 100% immune to your own traps.</li>
-          <li>A bite just <strong>slides you down to the tail</strong> — no point-stealing.</li>
-          <li>Once a player snake bites, it is <strong>consumed</strong> and removed from the board.</li>
+          <li><strong>Owner immunity:</strong> you are 100% immune to your own traps.</li>
+          <li>A bite from a <strong>player-owned snake</strong> slides you to the tail <em>and</em> <strong>steals your points</strong> (flat 15 + 30% of your wallet) — transferred directly to the snake's owner. Board terrain snakes don't steal.</li>
+          <li>Once a player snake bites, it is <strong>consumed</strong> and removed from the board (re-placeable).</li>
         </ul>
 
         <h3>Bombs &amp; Bankruptcy</h3>
         <p>
-          There are 5 fixed bomb tiles on the board. Landing on one inflicts a heavy depth-scaled point penalty. If your wallet goes below 0, you go **BANKRUPT**!
+          There are 5 bomb tiles on the board. Landing on one inflicts a heavy depth-scaled point penalty. If your wallet goes below 0, you go <strong>BANKRUPT</strong>!
         </p>
         <p class="highlight-danger">
-          <strong>BANKRUPTCY RESETS YOU TO TILE 0 WITH ZERO POINTS!</strong> Use safety cushions!
+          <strong>BANKRUPTCY RESETS YOU TO TILE 0 WITH ZERO POINTS!</strong> Keep a safety buffer!
+        </p>
+        <p>
+          After going bankrupt, you enter a <strong>6-turn immunity window</strong> — further point losses (steals, bombs) clamp your wallet to 0 instead of resetting your position again. This prevents unfair death-loops.
         </p>
 
         <h3>AI Opponents</h3>
         <ul>
-          <li><strong>Easy (Expectimax):</strong> deliberate weak heuristic, reacts late, hoards points, only buys short cheap traps.</li>
-          <li><strong>Hard (PPO Neural Network):</strong> trained via reinforcement learning self-play, places catch-optimal traps, parks win-denials near the finish line, manages points aggressively.</li>
+          <li><strong>Easy (Expectimax):</strong> deliberately weak heuristic — reacts late, hoards points, only buys short cheap traps. A beatable baseline.</li>
+          <li><strong>Hard (PPO Neural Network):</strong> trained reinforcement-learning agent with 5 strategies — patient saving, cheap pressure, big knockbacks, win-denial lurks near the finish, and <strong>combo strikes</strong> (snake tail on a bomb tile for double punishment). Plays stochastically so its timing is unpredictable. Steals your points on every bite it lands.</li>
         </ul>
       </div>
     </div>
