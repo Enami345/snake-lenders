@@ -6,7 +6,7 @@ colorTo: yellow
 sdk: docker
 pinned: false
 license: mit
-short_description: Strategic Snakes & Ladders with economy, AI traps, and sabotage
+short_description: Strategic Snakes & Ladders with AI sabotage
 ---
 
 # 🐍 Snakes & Lenders
