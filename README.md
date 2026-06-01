@@ -1,3 +1,14 @@
+---
+title: Snakes & Lenders
+emoji: 🐍
+colorFrom: indigo
+colorTo: yellow
+sdk: docker
+pinned: false
+license: mit
+short_description: Strategic Snakes & Ladders with economy, AI traps, and sabotage
+---
+
 # 🐍 Snakes & Lenders
 
 A strategic twist on the classic Snakes & Ladders board game.
