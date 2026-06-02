@@ -42,9 +42,9 @@ def _no_cache(response):
     return response
 
 # Load the PPO model once at startup (Hard AI). Falls back to Expectimax.
-PPO_MODEL = None
+PPO_MODEL = None   # (ckpt, net) tuple or None
 try:
-    PPO_MODEL = load_ppo_model()
+    PPO_MODEL = load_ppo_model()   # returns (ckpt_dict, ActorCritic)
     print("[PPO] Model pre-loaded for Hard AI.")
 except Exception as e:
     print(f"[PPO] Preload warning: {e} — Hard AI falls back to Expectimax.")
@@ -73,7 +73,8 @@ class Session:
     def _ai_decision(self, player):
         if player.ai_difficulty == "hard" and PPO_MODEL is not None:
             try:
-                return ppo_decision(self.board, player, PPO_MODEL)
+                ckpt, net = PPO_MODEL
+                return ppo_decision(self.board, player, ckpt, net)
             except Exception as e:
                 print(f"[PPO] inference error: {e} — falling back to Expectimax this turn.")
         return expectimax_decision(self.board, player)
