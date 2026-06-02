@@ -8,14 +8,21 @@ Install dependency first:
 """
 
 import os
-import numpy as np
-from game.models import BoardState, Player
-from game.engine import calculate_snake_cost, can_place_snake
 import random
 
+import numpy as np
+
+from game.log import gprint
+from game.models import BoardState, Player
+from game.engine import calculate_snake_cost, can_place_snake
 from ai.expectimax import (find_best_snake_to_buy, expectimax_decision,
                            strong_decision, propose_cheap_trap,
                            propose_big_snake, propose_lurk, propose_combo)
+
+# stable_baselines3 / gymnasium are imported lazily inside train_ppo() and
+# build_training_env() — they are only needed during training, not at game
+# startup. Keeping them lazy lets server.py start without SB3 installed and
+# load_ppo_model() still works (it imports PPO on demand, caught gracefully).
 
 # PPO action space — the policy picks a STRATEGY each turn:
 #   0 = roll only (patient / save points)
@@ -428,7 +435,6 @@ def ppo_decision(board: BoardState, player: Player, model) -> dict | None:
 
     shop = _action_to_shop(board, player, int(action))
     if shop:
-        from game.log import gprint
         gprint(f"  [{player.name}] (PPO) snake "
                f"{shop['head']}→{shop['tail']}")
     return shop
