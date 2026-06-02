@@ -537,15 +537,17 @@ def train_ppo(total_timesteps: int = 100_000, opponent_pool: bool = False,
 
     finally:
         game_log.VERBOSE = True
+        # Save inside finally so Ctrl+C still preserves completed steps
+        torch.save({
+            "model_state":     net.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "obs_dim":         OBS_DIM,
+            "n_actions":       N_ACTIONS,
+            "total_steps":     prior_steps + steps_done,
+        }, save_path)
+        print(f"[PPO] Saved {save_path} "
+              f"({prior_steps + steps_done:,} total steps).")
 
-    # Save checkpoint
-    torch.save({
-        "model_state":     net.state_dict(),
-        "optimizer_state": optimizer.state_dict(),
-        "obs_dim":         OBS_DIM,
-        "n_actions":       N_ACTIONS,
-        "total_steps":     prior_steps + steps_done,
-    }, save_path)
     print(f"[PPO] Done. Saved {save_path} "
           f"({prior_steps + steps_done:,} total steps).")
 
