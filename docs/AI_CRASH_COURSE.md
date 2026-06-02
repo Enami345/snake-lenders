@@ -148,6 +148,96 @@ _catch_offsets() = range(STRIKE_ZONE + 1, 7)   # = [1,2,3,4,5,6] when Z=0
 | `propose_lurk` | Near-goal (opp pos ≥ 60), max setback | tail=1, 20, 30, 40 back |
 | `propose_combo` | Tail on a bomb tile (knockback + bomb damage stacked) | Max setback with tail ∈ bombs |
 
+### Full Expectimax agent pseudocode
+
+```
+ALGORITHM: Expectimax Agent (Easy Mode)
+INPUT:  board state, player
+OUTPUT: {head, tail} snake placement OR None
+
+────────────────────────────────────────────────────────────────
+FUNCTION expectimax_decision(board, player):
+
+  // Guard: can we even buy?
+  IF player.snake_count >= 3:
+    RETURN None
+
+  // Handicap 1: only react when opponent is far along
+  leader_pos ← max(opponent.position for opponent in board.players)
+  IF leader_pos < EASY_SABOTAGE_MIN_POS (35):
+    RETURN None
+
+  // Handicap 2: random hesitation (35% skip)
+  IF random() < EASY_SKIP_PROB (0.35):
+    RETURN None
+
+  // Handicap 3: only place a cheap short trap
+  shop ← propose_cheap_trap(board, player)
+  IF shop is None:
+    RETURN None
+
+  // Handicap 4: over-cautious hoarding
+  cost ← calculate_snake_cost(player, shop.head, shop.tail)
+  IF player.points - cost < EASY_BUFFER (45):
+    RETURN None
+
+  RETURN shop
+
+────────────────────────────────────────────────────────────────
+FUNCTION propose_cheap_trap(board, player):
+
+  opp ← opponent with highest position
+  FOR offset IN [1, 2, 3, 4, 5, 6]:          // catch-optimal dice range
+    head ← opp.position + offset
+    FOR length IN [8, 6, 5]:                  // short traps only
+      tail ← head - length
+      IF is_valid(board, player, head, tail) AND affordable:
+        RETURN {head, tail}
+  RETURN None
+
+────────────────────────────────────────────────────────────────
+FUNCTION evaluate_snake_placement(board, player, head, tail):
+
+  setback ← head - tail
+  FOR each opponent:
+    dist    ← head - opponent.position
+    p_hit   ← 0.50 if dist ≤ 6
+               0.35 if dist ≤ 12
+               0.20 otherwise
+    weight  ← 1.0 + (opponent.position / 100)
+    damage  ← setback × TILE_VALUE × p_hit × weight
+
+    IF head ≥ 85 AND opponent.position ≥ 72:  // win-denial
+      damage ← damage × 1.8
+
+  RETURN max(damage across all opponents)
+
+────────────────────────────────────────────────────────────────
+FUNCTION expected_value_after_roll(board, player):
+
+  total ← 0
+  FOR die IN [1, 2, 3, 4, 5, 6]:
+    new_pos ← player.position + die
+    IF new_pos > 100: new_pos ← player.position  // overshoot = stay
+    apply ladder at new_pos if any
+    apply snake  at new_pos if any
+    total ← total + evaluate_state(board with player at new_pos)
+  RETURN total / 6
+
+FUNCTION evaluate_state(board, player):
+  score ← player.position × 10
+  score ← score + player.points × 0.1
+  FOR each opponent:
+    score ← score + (player.position - opponent.position) × 5
+    FOR each snake owned by player:
+      IF snake.head > opponent.position:
+        dist_ahead ← snake.head - opponent.position
+        score ← score + 50 if dist_ahead ≤ 6
+                         20 if dist_ahead ≤ 12
+                          5 otherwise
+  RETURN score
+```
+
 ---
 
 ## Part 2 — PPO Agent (`ai/ppo_agent.py`)
@@ -324,6 +414,176 @@ ppo_decision(board, player, model):
 `deterministic=False` → samples from the probability distribution instead of
 always picking the single highest-probability action. This makes the agent
 **unpredictable** — opponents can't learn its exact timing.
+
+### Full PPO agent pseudocode
+
+```
+ALGORITHM: PPO Agent (Hard Mode)
+INPUT:  board state, player, trained model
+OUTPUT: {head, tail} snake placement OR None
+
+────────────────────────────────────────────────────────────────
+INFERENCE (runtime — called every Hard AI turn)
+
+FUNCTION ppo_decision(board, player, model):
+  IF player.snake_count >= 3:
+    RETURN None
+
+  obs    ← encode_state(board, player)       // 22-dim float32 vector
+  action ← model.predict(obs,
+              deterministic=False)            // STOCHASTIC sample
+  shop   ← _action_to_shop(board, player, action)
+  RETURN shop   // {head, tail} or None
+
+FUNCTION _action_to_shop(board, player, action):
+  IF action == 0: RETURN None                // roll only
+  IF action == 1: RETURN propose_cheap_trap(board, player)
+  IF action == 2: RETURN propose_big_snake(board, player)
+  IF action == 3: RETURN propose_lurk(board, player)
+  IF action == 4: RETURN propose_combo(board, player)
+
+────────────────────────────────────────────────────────────────
+STATE ENCODING (called before every prediction)
+
+FUNCTION encode_state(board, player) → float32[22]:
+  state[0]    ← player.position / 100
+  state[1]    ← min(player.points / 2000, 1.0)
+  state[2]    ← player.snake_count / 3
+
+  FOR i, opp IN enumerate(opponents[:3]):
+    state[3+i] ← opp.position / 100
+    state[6+i] ← min(opp.points / 2000, 1.0)
+    state[9+i] ← opp.snake_count / 3
+
+  leader      ← opponent with max position
+  state[12]   ← min(snakes_ahead_of_leader / 10, 1.0)
+  state[20]   ← (100 - leader.position) / 100
+
+  state[13]   ← min(dist_to_nearest_bomb_ahead / 20, 1.0)   // 1.0 if none
+  state[14]   ← min(dist_to_nearest_ladder_ahead / 20, 1.0) // 1.0 if none
+
+  best ← find_best_snake_to_buy(board, player)
+  IF best:
+    state[15] ← min(cost / 1000, 1.0)
+    state[16] ← clamp(damage / 100, -1, 1)
+    state[17] ← 1.0 if player.points >= cost else 0.0
+
+  state[18] ← 1.0 if propose_combo(board, player) else 0.0
+  state[19] ← 1.0 if player.bankrupt_immune > 0 else 0.0
+  state[21] ← min(turn_number / 100, 1.0)
+  RETURN state
+
+────────────────────────────────────────────────────────────────
+ENVIRONMENT STEP (one full round during training)
+
+FUNCTION step(action):
+  start_pos     ← agent.position
+  opp_pos_before ← {opp.id: opp.position for each opp}
+
+  // 1. Agent's turn
+  shop   ← _action_to_shop(board, agent, action)
+  result ← do_turn(board, shop_decision=shop)
+  agent_bought   ← result.bought
+  placed_setback ← shop.head - shop.tail  if bought else 0
+  placed_combo   ← shop.tail IN board.bombs  if bought else False
+  winner ← result.winner
+
+  // 2. Opponents' turns (loop until back to agent)
+  WHILE winner is None AND board.active_player != agent:
+    opp_decision ← opp_decide_fn(board, active_player)  // random from pool
+    opp_result   ← do_turn(board, shop_decision=opp_decision)
+    winner ← opp_result.winner
+
+  // 3. Measure opponent setback (our sabotage paying off)
+  opp_setback ← sum(max(0, opp_pos_before[o.id] - o.position) for each opp)
+
+  // 4. Compute reward
+  reward ← _compute_reward(winner, agent_bought, start_pos,
+                            went_bankrupt, opp_setback,
+                            placed_setback, placed_combo)
+
+  // 5. Next observation
+  obs ← encode_state(board, agent)
+  RETURN obs, reward, terminated, truncated
+
+────────────────────────────────────────────────────────────────
+REWARD FUNCTION
+
+FUNCTION _compute_reward(...):
+  // Terminal: win/loss dominates everything
+  IF winner == agent:    RETURN +100.0
+  IF winner != agent:    RETURN -100.0
+
+  reward ← 0.0
+  reward ← reward + (agent.position - start_pos) × 0.1   // progress
+  reward ← reward + opp_setback × 0.5                    // sabotage
+
+  IF went_bankrupt:
+    reward ← reward - 50.0
+
+  IF agent_bought:
+    reward ← reward + 4.0 + placed_setback × 0.3         // deploy
+    IF placed_combo:
+      reward ← reward + 12.0                              // COMBO BONUS
+
+  ELSE IF agent.points > 100:
+    reward ← reward - 1.0                                 // anti-hoard
+
+  RETURN reward
+
+────────────────────────────────────────────────────────────────
+PPO POLICY UPDATE (happens after collecting 4 × 2048 steps)
+
+FOR each update iteration:
+
+  // Collect experience
+  FOR t = 1 to n_steps (2048) × n_envs (4):
+    obs_t   ← encode_state(board, agent)
+    action  ← π_old.sample(obs_t)              // stochastic from current policy
+    obs_t+1, reward_t, done_t ← step(action)
+
+  // Compute advantages (GAE)
+  FOR t = T downto 0:
+    delta_t ← reward_t + γ × V(obs_t+1) - V(obs_t)
+    A_t     ← delta_t + (γ × λ) × A_t+1       // γ=0.99, λ=0.95
+
+  // Update (10 epochs, batches of 64)
+  FOR epoch = 1 to 10:
+    FOR each minibatch:
+      ratio ← π_new(action|obs) / π_old(action|obs)
+      L_clip ← min(ratio × A,
+                   clip(ratio, 1-ε, 1+ε) × A)   // ε=0.2
+      L_entropy ← ent_coef × H(π_new)           // = 0.03 × entropy
+      L_value ← (V(obs) - target)²
+
+      loss ← -L_clip - L_entropy + 0.5 × L_value
+      gradient_step(loss, lr=3e-4)               // Adam optimizer
+
+────────────────────────────────────────────────────────────────
+TRAINING PIPELINE
+
+FUNCTION train_ppo(total_timesteps, opponent_pool):
+
+  // Build opponent pool
+  deciders ← [expectimax_decision, strong_decision]
+  IF opponent_pool AND frozen_model_exists AND shape_matches:
+    deciders.append(frozen_ppo_decision)         // self-play
+
+  // Load or start fresh
+  IF existing_model AND shape_matches (22-dim / 5-action):
+    model ← PPO.load(save_path)                  // CONTINUE
+  ELSE:
+    model ← PPO(MlpPolicy, lr=3e-4, clip=0.2,
+                ent_coef=0.03, device=cpu, ...)  // FRESH
+
+  // Silence game logs, train, restore logs
+  log.VERBOSE ← False
+  model.learn(total_timesteps,
+              reset_num_timesteps=(model.steps == 0))
+  log.VERBOSE ← True
+
+  model.save(save_path)
+```
 
 ---
 
