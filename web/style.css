@@ -279,6 +279,110 @@ h1, h2, h3, h4, .font-heading {
   gap: 30px;
 }
 
+/* ── MOBILE RESPONSIVE — menu, lobby, game ── */
+@media (max-width: 600px) {
+  /* Menu screen */
+  .menu-content {
+    gap: 28px;
+    padding: 20px 16px;
+    max-width: 100%;
+  }
+  .game-logo {
+    font-size: 2.2rem;
+    line-height: 1.2;
+  }
+  .subtitle {
+    font-size: 0.8rem;
+    letter-spacing: 0.18em;
+  }
+  .menu-buttons {
+    gap: 12px;
+  }
+  .btn-large {
+    font-size: 1rem;
+    padding: 15px 24px;
+  }
+  .credits {
+    font-size: 0.75rem;
+  }
+
+  /* Lobby screen */
+  .lobby-content {
+    padding: 16px;
+    margin: 8px;
+    width: calc(100% - 16px);
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .lobby-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .section-title {
+    font-size: 1.2rem;
+  }
+  .lobby-actions {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .lobby-actions .btn-premium {
+    width: 100%;
+  }
+
+  /* Game screen — stack sidebar below board */
+  .game-layout {
+    flex-direction: column !important;
+    height: auto !important;
+    overflow-y: auto;
+  }
+  .board-wrap {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  .sidebar {
+    width: 100% !important;
+    max-width: 100% !important;
+    border-left: none !important;
+    border-top: 1px solid var(--glass-border);
+    padding: 12px !important;
+  }
+  .sidebar-section {
+    padding: 10px !important;
+  }
+  .action-panel {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .action-panel .btn-premium {
+    flex: 1 1 140px;
+    font-size: 0.9rem;
+    padding: 12px 10px;
+  }
+  .standins-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .react-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+  }
+
+  /* Modals */
+  .modal-content {
+    width: 95% !important;
+    padding: 18px 16px !important;
+    max-height: 88vh;
+    overflow-y: auto;
+  }
+  #modal-snake-confirm .modal-content {
+    width: 92% !important;
+    max-width: 92% !important;
+    bottom: 16px !important;
+  }
+}
+
 @media (max-width: 768px) {
   .lobby-grid {
     grid-template-columns: 1fr;
