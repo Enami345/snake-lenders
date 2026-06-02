@@ -267,40 +267,50 @@ Policy π:                          Policy π:
 ### Imports & why
 
 ```python
-import os                           # os.path.exists for model load/save
-import numpy as np                  # encode_state → float32 array
-from game.models import BoardState, Player
-from game.engine import calculate_snake_cost, can_place_snake
+import os                           # file path checks for model load/save
 import random                       # pick opponent from pool each episode
+import numpy as np                  # encode_state → float32 array
+import torch                        # neural network, autograd, Adam optimizer
+import torch.nn as nn               # Linear, Tanh, Sequential, MSE loss
+import torch.optim as optim         # Adam optimizer
+from torch.distributions import Categorical   # stochastic action sampling
+
+from game.log import gprint
+from game.models import BoardState, Player
+from game.engine import calculate_snake_cost, can_place_snake, MAX_SNAKE_HEAD
 
 from ai.expectimax import (
-    find_best_snake_to_buy,         # encode_state uses this for best-snake features
-    expectimax_decision,            # Easy opponent in training pool
-    strong_decision,                # Strong opponent in training pool
-    propose_cheap_trap,             # PPO action 1
-    propose_big_snake,              # PPO action 2
-    propose_lurk,                   # PPO action 3
-    propose_combo,                  # PPO action 4
+    expectimax_decision,            # Easy bot — training opponent only
+    strong_decision,                # Strong bot — training opponent only
 )
-# gymnasium / stable_baselines3: imported lazily inside functions
-# (only needed during training — not at game startup)
+# No gymnasium, no stable-baselines3.
+# Training env, rollout buffer, and PPO update loop are all implemented here.
 ```
 
-Note: `ppo_agent.py` **imports from** `expectimax.py`. The PPO agent reuses
-Expectimax's placement strategies as its action implementations. PPO decides
-**which strategy** to use; Expectimax functions execute **how**.
+**Critical difference from old builds:** `ppo_agent.py` no longer imports
+`propose_cheap_trap`, `propose_big_snake`, `propose_lurk`, `propose_combo`, or
+`find_best_snake_to_buy` from Expectimax. PPO resolves placements by scanning
+the board itself using only engine rules (`can_place_snake`, `calculate_snake_cost`).
+Expectimax is imported **only as a training opponent** — never as a placement helper.
 
 ### Action space — Discrete(5)
 
 ```
 N_ACTIONS = 5
 
-Action 0 → return None             (just roll, save points)
-Action 1 → propose_cheap_trap()    (cheap pressure)
-Action 2 → propose_big_snake()     (max knockback)
-Action 3 → propose_lurk()          (win-denial near finish)
-Action 4 → propose_combo()         (tail on bomb = knockback + bomb damage)
+Action 0 → roll only (return None)
+Action 1 → short pressure trap    — scan board for shortest affordable
+           snake in opponent's dice range (engine rules only)
+Action 2 → big knockback          — scan board for longest affordable
+           snake in opponent's dice range (engine rules only)
+Action 3 → win-denial lurk        — snake near tile 90 when opp pos ≥ 60
+           (engine rules only)
+Action 4 → combo                  — snake whose tail is a bomb tile
+           (engine rules only)
 ```
+
+Each action calls `_action_to_shop(board, player, action)` which scans
+the board inline. No `propose_*` functions from Expectimax are called.
 
 ### Observation space — 22-dim float32 vector
 
@@ -319,10 +329,10 @@ encode_state(board, player) → np.ndarray shape (22,)
 | 12 | Snakes ahead of leader | `min(count / 10, 1.0)` |
 | 13 | Nearest bomb distance ahead | `min(dist / 20, 1.0)` · 1.0 if none |
 | 14 | Nearest ladder distance ahead | `min(dist / 20, 1.0)` · 1.0 if none |
-| 15 | Best snake cost | `min(cost / 1000, 1.0)` |
-| 16 | Best snake damage | `clamp(dmg / 100, −1, 1)` |
-| 17 | Can afford best snake | `1.0` or `0.0` |
-| 18 | Combo available | `1.0` if `propose_combo()` returns non-None |
+| 15 | Best snake cost | `min(cost / 1000, 1.0)` — computed via inline board scan |
+| 16 | Best snake damage | `min(dmg / 100, 1.0)` — computed via inline board scan |
+| 17 | Can afford best snake | `1.0` or `0.0` — from inline board scan |
+| 18 | Combo available | `1.0` if bomb tail valid — checked inline via `_try_place` |
 | 19 | Bankruptcy immunity active | `1.0` if `bankrupt_immune > 0` |
 | 20 | Leader's distance to goal | `(100 − leader.pos) / 100` |
 | 21 | Turn number | `min(turn / 100, 1.0)` |
@@ -349,240 +359,277 @@ else:
 The shaping is deliberately heavy on sabotage rewards so the policy doesn't
 discover that hoarding points and doing nothing is "safe."
 
-### PPO update algorithm
+### Neural network — `ActorCritic`
+
+Custom MLP implemented in PyTorch (no stable-baselines3):
+
+```python
+class ActorCritic(nn.Module):
+    body   = Sequential(Linear(22,64), Tanh(), Linear(64,64), Tanh())
+    actor  = Linear(64, 5)    # outputs logits over 5 actions
+    critic = Linear(64, 1)    # outputs scalar state value V(s)
+
+forward(x) → (logits, value)
+act(obs)   → sample action + log_prob + value  (no grad, inference)
+evaluate(obs, actions) → log_probs, values, entropy  (with grad, training)
+```
+
+### PPO update algorithm (pure PyTorch, no SB3)
 
 ```
 For each update iteration:
-  1. Collect rollouts with 4 parallel envs × 2048 steps each
-  2. Compute advantages using GAE (Generalized Advantage Estimation):
-       A_t = r_t + γ × V(s_{t+1}) − V(s_t)
-       (γ = 0.99 — values future rewards)
-  3. For 10 mini-batch epochs:
-       Compute ratio r = π_new(a|s) / π_old(a|s)
-       Clipped objective: min(r × A, clip(r, 1−ε, 1+ε) × A)
-                          where ε = clip_range = 0.2
-       Add entropy bonus: +ent_coef × H(π)  (forces exploration)
-       Update policy net + value net via Adam (lr=3e-4)
+  1. Collect n_steps=2048 of experience (single env, serial)
+  2. Bootstrap last value for GAE:
+       last_value ← critic(last_obs)
+  3. Compute GAE advantages:
+       FOR t = T downto 0:
+         delta_t ← reward_t + γ × V(s_{t+1}) × (1-done_t) − V(s_t)
+         A_t     ← delta_t + γ × λ × A_{t+1} × (1-done_t)
+       returns  ← advantages + values
+  4. Normalise advantages: A ← (A − mean(A)) / (std(A) + 1e-8)
+  5. For n_epochs=10, minibatches of 64:
+       ratio    ← exp(log_π_new(a|s) − log_π_old(a|s))
+       L_clip   ← min(ratio×A, clip(ratio, 1−0.2, 1+0.2)×A)
+       L_value  ← MSE(V(s), returns)
+       L_entropy← −entropy of π_new
+       loss     ← −L_clip + 0.5×L_value + 0.03×L_entropy
+       loss.backward(); clip_grad_norm(0.5); Adam.step()
 ```
 
-The **clipping** `clip(r, 0.8, 1.2)` prevents the update from changing the
-policy too much in one step — if the new policy is too different from the old
-one, the gradient is cut off. This is what makes PPO stable.
-
-### Training flow
+### Training flow (no gymnasium, no stable-baselines3)
 
 ```
 train_ppo(total_timesteps, opponent_pool=True):
 
-  build_training_env():
-    deciders = [easy_bot, strong_bot]
-    if frozen model exists AND shape matches (22,)/5:
-        deciders.append(frozen_ppo)    # self-play
-    else:
-        print "skipping self-play (shape mismatch)"
+  // Build opponent pool
+  deciders ← [expectimax_decision, strong_decision]
+  IF opponent_pool AND ai/ppo_model.pt exists AND shape matches:
+    deciders.append(frozen_ppo_decision)   // self-play
 
-  if existing model has matching shape:
-    model = PPO.load(save_path, env)   # CONTINUE from prior steps
-  else:
-    model = PPO(MlpPolicy, ...)        # fresh start
+  // Load or start fresh
+  net ← ActorCritic(obs_dim=22, n_actions=5)
+  IF ai/ppo_model.pt exists AND obs_dim==22 AND n_actions==5:
+    net.load_state_dict(ckpt["model_state"])  // CONTINUE
+    optimizer.load_state_dict(ckpt["optimizer_state"])
+  ELSE:
+    net fresh weights, fresh Adam              // FRESH
 
-  model.learn(total_timesteps, reset_num_timesteps=(steps==0))
-  model.save(save_path)
-```
+  env ← SnakesLendersEnv(random.choice(deciders))  // pure Python env
+  buffer ← RolloutBuffer()
 
-**Two-stage training:**
-```
-Stage 1: train_ppo(3_000_000, opponent_pool=True)
-         → pool = {Easy, Strong}  (frozen self-play skipped, old model is 14-dim)
-         → saves ai/ppo_model.zip at 3M steps
+  WHILE steps < total_timesteps:
+    collect n_steps via env.step()
+    compute GAE returns + advantages
+    PPO update (10 epochs × minibatches)
 
-Stage 2: train_ppo(2_000_000, opponent_pool=True)
-         → pool = {Easy, Strong, frozen stage-1 PPO}  (shape now matches)
-         → continues from 3M, saves at 5M steps
+  torch.save({model_state, optimizer_state, obs_dim, n_actions,
+              total_steps}, "ai/ppo_model.pt")
 ```
 
 ### Inference
 
 ```python
-ppo_decision(board, player, model):
-    obs = encode_state(board, player)    # 22-dim vector
-    action, _ = model.predict(obs, deterministic=False)  # STOCHASTIC
-    shop = _action_to_shop(board, player, int(action))
-    return shop  # dict {head, tail} or None
+ppo_decision(board, player, ckpt, net):
+    obs    = encode_state(board, player)      # 22-dim vector
+    obs_t  = torch.tensor(obs).unsqueeze(0)
+    action = net.act(obs_t)                   # STOCHASTIC sample (Categorical)
+    shop   = _action_to_shop(board, player, action)
+    return shop   # {head, tail} or None
 ```
 
-`deterministic=False` → samples from the probability distribution instead of
-always picking the single highest-probability action. This makes the agent
-**unpredictable** — opponents can't learn its exact timing.
+Stochastic sampling via `torch.distributions.Categorical` — no
+`deterministic` flag, always samples from the policy distribution.
+Makes the agent unpredictable — opponents can't learn its exact timing.
 
 ### Full PPO agent pseudocode
 
 ```
-ALGORITHM: PPO Agent (Hard Mode)
-INPUT:  board state, player, trained model
+ALGORITHM: PPO Agent (Hard Mode — pure PyTorch, no SB3)
+INPUT:  board state, player, ActorCritic net
 OUTPUT: {head, tail} snake placement OR None
 
 ────────────────────────────────────────────────────────────────
-INFERENCE (runtime — called every Hard AI turn)
+NEURAL NETWORK
 
-FUNCTION ppo_decision(board, player, model):
-  IF player.snake_count >= 3:
-    RETURN None
+CLASS ActorCritic(nn.Module):
+  body   ← Linear(22,64) → Tanh → Linear(64,64) → Tanh
+  actor  ← Linear(64, 5)    // policy logits
+  critic ← Linear(64, 1)    // state value V(s)
 
-  obs    ← encode_state(board, player)       // 22-dim float32 vector
-  action ← model.predict(obs,
-              deterministic=False)            // STOCHASTIC sample
-  shop   ← _action_to_shop(board, player, action)
-  RETURN shop   // {head, tail} or None
+  FUNCTION act(obs_tensor):        // inference, no grad
+    logits, value ← forward(obs)
+    dist   ← Categorical(logits=logits)
+    action ← dist.sample()          // STOCHASTIC
+    RETURN action, dist.log_prob(action), value
 
-FUNCTION _action_to_shop(board, player, action):
-  IF action == 0: RETURN None                // roll only
-  IF action == 1: RETURN propose_cheap_trap(board, player)
-  IF action == 2: RETURN propose_big_snake(board, player)
-  IF action == 3: RETURN propose_lurk(board, player)
-  IF action == 4: RETURN propose_combo(board, player)
+  FUNCTION evaluate(obs, actions):  // training, with grad
+    logits, values ← forward(obs)
+    dist      ← Categorical(logits=logits)
+    log_probs ← dist.log_prob(actions)
+    entropy   ← dist.entropy()
+    RETURN log_probs, values, entropy
 
 ────────────────────────────────────────────────────────────────
-STATE ENCODING (called before every prediction)
+INFERENCE (called every Hard AI turn — no Expectimax helpers)
+
+FUNCTION ppo_decision(board, player, ckpt, net):
+  IF player.snake_count >= 3: RETURN None
+
+  obs    ← encode_state(board, player)         // 22-dim float32
+  obs_t  ← torch.tensor(obs).unsqueeze(0)
+  action, _, _ ← net.act(obs_t)               // stochastic sample
+  shop   ← _action_to_shop(board, player, action)
+  RETURN shop  // {head, tail} or None
+
+FUNCTION _action_to_shop(board, player, action):
+  // Resolves strategy → exact tiles via ENGINE RULES ONLY
+  // No Expectimax helper functions called
+  IF action == 0: RETURN None
+  opp ← opponent with highest position
+  IF action == 1:  // short trap
+    FOR offset IN [1..6]:
+      head ← opp.position + offset
+      FOR length IN [5,6,8,10]:
+        IF can_place_snake(head, head-length) AND affordable:
+          RETURN {head, head-length}
+  IF action == 2:  // big knockback
+    best ← None
+    FOR offset IN [1..6]:
+      FOR tail IN [1, head-40, head-30, head-20, head-10]:
+        IF valid AND longer than best: best ← {head, tail}
+    RETURN best
+  IF action == 3:  // win-denial (opp pos ≥ 60)
+    IF opp.position < 60: RETURN None
+    similar search near tile 90
+  IF action == 4:  // combo (tail on bomb)
+    FOR tail IN board.bombs:
+      FOR offset IN [1..6]:
+        IF valid AND bigger setback: best ← {head, tail}
+    RETURN best
+
+────────────────────────────────────────────────────────────────
+STATE ENCODING (no Expectimax calls — all inline board scan)
 
 FUNCTION encode_state(board, player) → float32[22]:
-  state[0]    ← player.position / 100
-  state[1]    ← min(player.points / 2000, 1.0)
-  state[2]    ← player.snake_count / 3
+  state[0-2]   ← pos/100, points/2000, snake_count/3
+  state[3-11]  ← opp positions, points, snake counts (up to 3 opps)
+  state[12]    ← snakes_ahead_of_leader / 10
+  state[13]    ← dist_to_nearest_bomb_ahead / 20  (1.0 if none)
+  state[14]    ← dist_to_nearest_ladder_ahead / 20 (1.0 if none)
 
-  FOR i, opp IN enumerate(opponents[:3]):
-    state[3+i] ← opp.position / 100
-    state[6+i] ← min(opp.points / 2000, 1.0)
-    state[9+i] ← opp.snake_count / 3
+  // [15-17]: best-snake features — inline board scan (NOT find_best_snake)
+  FOR offset IN [1..6]:
+    FOR tail IN [1, head-20, head-10, head-5]:
+      IF can_place_snake(head, tail):
+        dmg  ← (head-tail) × 10 × (1 + opp.pos/100)
+        IF dmg > best_dmg: update best_cost, best_dmg, can_afford
 
-  leader      ← opponent with max position
-  state[12]   ← min(snakes_ahead_of_leader / 10, 1.0)
-  state[20]   ← (100 - leader.position) / 100
+  state[15] ← min(best_cost / 1000, 1.0)
+  state[16] ← min(best_dmg / 100, 1.0)
+  state[17] ← 1.0 if affordable else 0.0
 
-  state[13]   ← min(dist_to_nearest_bomb_ahead / 20, 1.0)   // 1.0 if none
-  state[14]   ← min(dist_to_nearest_ladder_ahead / 20, 1.0) // 1.0 if none
+  // [18]: combo available — inline check (NOT propose_combo)
+  FOR tail IN board.bombs:
+    IF _try_place(board, player, opp.pos+offset, tail): combo ← 1.0
 
-  best ← find_best_snake_to_buy(board, player)
-  IF best:
-    state[15] ← min(cost / 1000, 1.0)
-    state[16] ← clamp(damage / 100, -1, 1)
-    state[17] ← 1.0 if player.points >= cost else 0.0
-
-  state[18] ← 1.0 if propose_combo(board, player) else 0.0
-  state[19] ← 1.0 if player.bankrupt_immune > 0 else 0.0
-  state[21] ← min(turn_number / 100, 1.0)
+  state[18] ← combo
+  state[19] ← 1.0 if bankrupt_immune > 0 else 0.0
+  state[20] ← (100 - leader.pos) / 100
+  state[21] ← turn_number / 100
   RETURN state
 
 ────────────────────────────────────────────────────────────────
-ENVIRONMENT STEP (one full round during training)
+ENVIRONMENT STEP (pure Python — no gymnasium)
 
-FUNCTION step(action):
-  start_pos     ← agent.position
-  opp_pos_before ← {opp.id: opp.position for each opp}
+CLASS SnakesLendersEnv:
+  FUNCTION reset():
+    board ← generate_board(2 players)
+    RETURN encode_state(board, agent)
 
-  // 1. Agent's turn
-  shop   ← _action_to_shop(board, agent, action)
-  result ← do_turn(board, shop_decision=shop)
-  agent_bought   ← result.bought
-  placed_setback ← shop.head - shop.tail  if bought else 0
-  placed_combo   ← shop.tail IN board.bombs  if bought else False
-  winner ← result.winner
+  FUNCTION step(action):
+    shop   ← _action_to_shop(board, agent, action)
+    result ← do_turn(board, shop_decision=shop)
+    agent_bought   ← result.bought
+    placed_setback ← shop.head - shop.tail  if bought else 0
+    placed_combo   ← shop.tail IN board.bombs  if bought else False
+    winner ← result.winner
 
-  // 2. Opponents' turns (loop until back to agent)
-  WHILE winner is None AND board.active_player != agent:
-    opp_decision ← opp_decide_fn(board, active_player)  // random from pool
-    opp_result   ← do_turn(board, shop_decision=opp_decision)
-    winner ← opp_result.winner
+    WHILE winner is None AND board.active_player != agent:
+      opp_result ← do_turn(board, opp_decide_fn(board, opp))
+      winner ← opp_result.winner
 
-  // 3. Measure opponent setback (our sabotage paying off)
-  opp_setback ← sum(max(0, opp_pos_before[o.id] - o.position) for each opp)
-
-  // 4. Compute reward
-  reward ← _compute_reward(winner, agent_bought, start_pos,
-                            went_bankrupt, opp_setback,
-                            placed_setback, placed_combo)
-
-  // 5. Next observation
-  obs ← encode_state(board, agent)
-  RETURN obs, reward, terminated, truncated
+    opp_setback ← sum(max(0, opp_pos_before[o] - o.position) for each opp)
+    reward ← _compute_reward(winner, agent, agent_bought, ...)
+    RETURN encode_state(board, agent), reward, done
 
 ────────────────────────────────────────────────────────────────
-REWARD FUNCTION
+REWARD FUNCTION (unchanged)
 
-FUNCTION _compute_reward(...):
-  // Terminal: win/loss dominates everything
   IF winner == agent:    RETURN +100.0
   IF winner != agent:    RETURN -100.0
-
-  reward ← 0.0
-  reward ← reward + (agent.position - start_pos) × 0.1   // progress
-  reward ← reward + opp_setback × 0.5                    // sabotage
-
-  IF went_bankrupt:
-    reward ← reward - 50.0
-
+  reward ← (agent.pos - start_pos) × 0.1
+  reward += opp_setback × 0.5
+  IF went_bankrupt: reward -= 50.0
   IF agent_bought:
-    reward ← reward + 4.0 + placed_setback × 0.3         // deploy
-    IF placed_combo:
-      reward ← reward + 12.0                              // COMBO BONUS
-
-  ELSE IF agent.points > 100:
-    reward ← reward - 1.0                                 // anti-hoard
-
-  RETURN reward
+    reward += 4.0 + placed_setback × 0.3
+    IF placed_combo: reward += 12.0
+  ELSE IF agent.points > 100: reward -= 1.0
 
 ────────────────────────────────────────────────────────────────
-PPO POLICY UPDATE (happens after collecting 4 × 2048 steps)
+PPO POLICY UPDATE (pure PyTorch)
+
+CLASS RolloutBuffer:
+  stores: obs, actions, log_probs, rewards, values, dones
+
+  FUNCTION compute_returns_and_advantages(last_value, γ=0.99, λ=0.95):
+    FOR t = T downto 0:
+      delta_t ← reward_t + γ × V(t+1) × (1-done_t) − V(t)
+      A_t     ← delta_t + γ × λ × A_{t+1} × (1-done_t)
+    returns ← advantages + values
 
 FOR each update iteration:
+  collect 2048 steps → RolloutBuffer
+  bootstrap: last_value ← critic(last_obs)
+  compute GAE advantages + returns
+  A ← (A - mean(A)) / (std(A) + 1e-8)   // normalise
 
-  // Collect experience
-  FOR t = 1 to n_steps (2048) × n_envs (4):
-    obs_t   ← encode_state(board, agent)
-    action  ← π_old.sample(obs_t)              // stochastic from current policy
-    obs_t+1, reward_t, done_t ← step(action)
-
-  // Compute advantages (GAE)
-  FOR t = T downto 0:
-    delta_t ← reward_t + γ × V(obs_t+1) - V(obs_t)
-    A_t     ← delta_t + (γ × λ) × A_t+1       // γ=0.99, λ=0.95
-
-  // Update (10 epochs, batches of 64)
   FOR epoch = 1 to 10:
-    FOR each minibatch:
-      ratio ← π_new(action|obs) / π_old(action|obs)
-      L_clip ← min(ratio × A,
-                   clip(ratio, 1-ε, 1+ε) × A)   // ε=0.2
-      L_entropy ← ent_coef × H(π_new)           // = 0.03 × entropy
-      L_value ← (V(obs) - target)²
-
-      loss ← -L_clip - L_entropy + 0.5 × L_value
-      gradient_step(loss, lr=3e-4)               // Adam optimizer
+    FOR each minibatch of 64:
+      new_lp, values, entropy ← net.evaluate(obs_batch, act_batch)
+      ratio    ← exp(new_lp - old_lp)
+      L_clip   ← min(ratio×A, clip(ratio, 0.8, 1.2)×A)
+      L_value  ← MSE(values, returns)
+      L_entropy← entropy.mean()
+      loss     ← -L_clip + 0.5×L_value - 0.03×L_entropy
+      loss.backward()
+      clip_grad_norm(net, max_norm=0.5)
+      Adam.step(lr=3e-4)
 
 ────────────────────────────────────────────────────────────────
 TRAINING PIPELINE
 
 FUNCTION train_ppo(total_timesteps, opponent_pool):
 
-  // Build opponent pool
   deciders ← [expectimax_decision, strong_decision]
-  IF opponent_pool AND frozen_model_exists AND shape_matches:
-    deciders.append(frozen_ppo_decision)         // self-play
+  IF opponent_pool AND ppo_model.pt exists AND shape matches:
+    deciders.append(frozen_ppo)       // self-play opponent
 
-  // Load or start fresh
-  IF existing_model AND shape_matches (22-dim / 5-action):
-    model ← PPO.load(save_path)                  // CONTINUE
-  ELSE:
-    model ← PPO(MlpPolicy, lr=3e-4, clip=0.2,
-                ent_coef=0.03, device=cpu, ...)  // FRESH
+  net ← ActorCritic(22, 5)
+  IF ppo_model.pt exists AND obs_dim==22 AND n_actions==5:
+    net.load_state_dict(ckpt["model_state"])   // CONTINUE
+    optimizer.load_state_dict(ckpt["optimizer_state"])
+  ELSE: fresh weights                           // FRESH
 
-  // Silence game logs, train, restore logs
-  log.VERBOSE ← False
-  model.learn(total_timesteps,
-              reset_num_timesteps=(model.steps == 0))
-  log.VERBOSE ← True
+  env ← SnakesLendersEnv(random.choice(deciders))
+  buffer ← RolloutBuffer()
 
-  model.save(save_path)
+  WHILE steps < total_timesteps:
+    collect 2048 steps → buffer
+    compute GAE
+    PPO update (10 epochs)
+
+  torch.save({model_state, optimizer_state, obs_dim:22,
+              n_actions:5, total_steps}, "ai/ppo_model.pt")
 ```
 
 ---
@@ -600,9 +647,9 @@ EXPECTIMAX (each turn):
   5. Return trap.
 
 PPO (each turn):
-  1. encode_state() → 22-dim float vector
-  2. model.predict(obs) → sample action from neural net distribution
-  3. _action_to_shop(action) → propose_cheap/big/lurk/combo or None
+  1. encode_state() → 22-dim float vector (inline board scan, no Expectimax)
+  2. net.act(obs) → Categorical.sample() → action index (stochastic)
+  3. _action_to_shop(action) → inline board scan via engine rules → {head,tail}
   4. Return shop or None.
 ```
 
@@ -611,29 +658,25 @@ PPO (each turn):
 | | Expectimax | PPO |
 |---|---|---|
 | **Who encodes knowledge** | Programmer (hand-tuned rules) | The game itself (via reward signal) |
+| **Placement decided by** | `propose_*` helper functions | Neural net output → engine rule scan |
 | **Adapts to opponents** | No — fixed heuristic | Partly — trained vs varied pool |
-| **Exploits board patterns** | Only what programmer coded | Any pattern that helps win |
-| **Knows about combo?** | Yes — `propose_combo` is a function | Yes — learned combo = biggest reward signal |
+| **External AI library** | None | `torch` only (no SB3, no gymnasium) |
+| **Knows about combo?** | Yes — `propose_combo` is a hand-coded function | Yes — learned via `+12.0` reward signal |
 
 ### Why PPO beats Expectimax
 
-1. **Timing** — Expectimax has a hard trigger (tile 35). PPO learns the
-   economically optimal timing from thousands of games.
-2. **Strategy mix** — Expectimax only uses cheap traps. PPO mixes all 5
-   strategies based on what the board actually calls for.
-3. **Anti-hoard** — The `-1.0` penalty in the reward function explicitly
-   punishes Expectimax-style hoarding. PPO learns to spend.
-4. **Combo exploitation** — `+12.0` reward makes PPO obsessively place
-   tail-on-bomb snakes. Expectimax never plays this.
-5. **Unpredictability** — Stochastic inference makes PPO hard to play around.
+1. **Timing** — Expectimax has a hard trigger (tile 35). PPO learns economically optimal timing from thousands of games.
+2. **Strategy mix** — Expectimax only uses cheap traps. PPO mixes all 5 strategies.
+3. **Anti-hoard** — The `-1.0` penalty explicitly punishes Expectimax-style hoarding.
+4. **Combo exploitation** — `+12.0` reward teaches PPO to prefer tail-on-bomb snakes.
+5. **Unpredictability** — Stochastic `Categorical.sample()` makes timing hard to predict.
 
 ### Why Expectimax is still useful
 
 1. **No training needed** — instant, zero setup.
-2. **Transparent** — every decision is traceable through a formula.
-3. **Training opponent** — its placement helpers (`propose_*`) are reused
-   directly by PPO as action implementations.
-4. **Beatable baseline** — validates that Hard AI is actually better.
+2. **Transparent** — every decision traceable through a formula.
+3. **Training opponent** — `expectimax_decision` and `strong_decision` are the pool opponents PPO trains against.
+4. **Beatable baseline** — validates Hard AI is actually better.
 
 ---
 
@@ -656,18 +699,23 @@ ai/expectimax.py
 └── propose_combo()            → strategy: tail on bomb tile
 
 ai/ppo_agent.py
-├── N_ACTIONS = 5              → action space size
-├── _action_to_shop()          → maps action index → placement function
-├── encode_state()             → board state → 22-dim float32 vector
-├── _obs_for_model()           → legacy obs adapter (shape mismatch handling)
-├── build_training_env()       → Gymnasium env class factory + opponent pool
-│   └── SnakesLendersEnv
-│       ├── reset()            → new game, pick random opponent from pool
-│       ├── step()             → agent turn + opponent turns + reward
-│       └── _compute_reward()  → reward formula (win + shaping)
-├── train_ppo()                → full training pipeline (continuation-aware)
-├── load_ppo_model()           → load main → backup (resilient)
-└── ppo_decision()             → inference: encode → predict → shop or None
+├── ActorCritic(nn.Module)     → shared-body MLP (body + actor head + critic head)
+│   ├── forward()              → (logits, value)
+│   ├── act()                  → sample action + log_prob + value (inference)
+│   └── evaluate()             → log_probs, values, entropy (training)
+├── RolloutBuffer              → stores experience for one rollout
+│   └── compute_returns_and_advantages() → GAE (γ=0.99, λ=0.95)
+├── SnakesLendersEnv           → pure Python game env (no gymnasium)
+│   ├── reset()                → generate_board → encode_state
+│   └── step(action)           → do_turn → opp turns → reward → encode_state
+├── _compute_reward()          → reward formula (win/loss + shaping)
+├── _leading_opponent()        → helper: opponent furthest ahead
+├── _try_place()               → helper: valid + affordable check (engine only)
+├── _action_to_shop()          → strategy index → exact tiles via ENGINE RULES
+├── encode_state()             → 22-dim float32 (all features inline — no Expectimax)
+├── train_ppo()                → full training loop (pure PyTorch, continuation-aware)
+├── load_ppo_model()           → torch.load main → backup; returns (ckpt, net)
+└── ppo_decision()             → encode → net.act → _action_to_shop → shop or None
 ```
 
 ---
@@ -678,17 +726,25 @@ ai/ppo_agent.py
 expectimax.py                      ppo_agent.py
 ─────────────────────────          ──────────────────────────────
 TILE_VALUE        = 10.0           N_ACTIONS          = 5
-HIT_IN_RANGE      = 0.50           MODEL_PATH         = ai/ppo_model.zip
-HIT_NEAR          = 0.35           BACKUP_PATH        = ai/ppo_model_backup.zip
-HIT_FAR           = 0.20
-WIN_DENIAL_TILE   = 85             PPO hyperparameters (train_ppo):
-WIN_DENIAL_OPP    = 72               learning_rate    = 3e-4
-WIN_DENIAL_MULT   = 1.8              n_steps          = 2048
-SABOTAGE_MIN_POS  = 10               batch_size       = 64
-MIN_DAMAGE_TO_BUY = 6.0              n_epochs         = 10
-SAFETY_BUFFER     = 12               gamma            = 0.99
-EASY_SABOTAGE_MIN = 35               clip_range       = 0.2
-EASY_BUFFER       = 45               ent_coef         = 0.03
-EASY_SKIP_PROB    = 0.35             device           = cpu
-                                     n_envs           = 4
+HIT_IN_RANGE      = 0.50           OBS_DIM            = 22
+HIT_NEAR          = 0.35           MODEL_PATH         = ai/ppo_model.pt
+HIT_FAR           = 0.20           BACKUP_PATH        = ai/ppo_model_backup.pt
+WIN_DENIAL_TILE   = 85
+WIN_DENIAL_OPP    = 72             PPO hyperparameters (train_ppo):
+WIN_DENIAL_MULT   = 1.8              learning_rate    = 3e-4
+SABOTAGE_MIN_POS  = 10               n_steps          = 2048
+MIN_DAMAGE_TO_BUY = 6.0              batch_size       = 64
+SAFETY_BUFFER     = 12               n_epochs         = 10
+EASY_SABOTAGE_MIN = 35               gamma            = 0.99
+EASY_BUFFER       = 45               lam (GAE λ)      = 0.95
+EASY_SKIP_PROB    = 0.35             clip_eps         = 0.2
+                                     ent_coef         = 0.03
+ActorCritic architecture:           vf_coef          = 0.5
+  hidden_size   = 64                grad_clip        = 0.5
+  activation    = Tanh              device           = cpu
+  body layers   = 2 × Linear(64)
+  actor head    = Linear(64, 5)    Libraries used:
+  critic head   = Linear(64, 1)      torch (PyTorch)  ← training + inference
+                                     numpy            ← obs encoding
+                                     (NO stable-baselines3, NO gymnasium)
 ```
